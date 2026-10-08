@@ -67,8 +67,6 @@ async function copyMermaid() {
 await rm('dist', { recursive: true, force: true });
 await mkdir('dist/public', { recursive: true });
 await cp('public', 'dist/public', { recursive: true });
-// 内置示例空间，首次初始化数据根目录时复制进 <root>/spaces/
-await cp('templates', 'dist/templates', { recursive: true });
 
 if (watch) {
   // vendor 资源只依赖 node_modules，构建一次即可，不进 watch

@@ -380,6 +380,9 @@ html[data-theme='dark'] #theme-toggle .icon-moon { display: none; }
 .tree__file.is-hidden, .tree__dir.is-hidden { display: none; }
 
 /* 目录树工具栏 */
+/* 没有空间时整个收起：display:flex 会盖过 UA 的 [hidden]，得自己写一条 */
+.tree-toolbar[hidden] { display: none; }
+
 .tree-toolbar {
   display: flex;
   align-items: center;

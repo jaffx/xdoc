@@ -5,7 +5,7 @@ import type { SpaceManager } from './space';
 
 /**
  * 从数据根目录加载空间：
- * 1. 准备 root（首次初始化时植入内置模板）
+ * 1. 准备 root（建出 spaces/ 与默认 config.json）
  * 2. 扫描 <root>/spaces 下的子目录，按 index.json 的 order 排序
  * 3. 逐个装载；缺 doc/ 或仍是平铺结构的目录由 ensureSpaceDir 自动补齐
  */
@@ -14,8 +14,7 @@ export async function bootstrapSpaces(
   root: string,
   log: (message: string) => void = () => {},
 ): Promise<void> {
-  const { seeded } = await ensureRoot(root);
-  for (const slug of seeded) log(`已植入内置示例空间：${slug}`);
+  await ensureRoot(root);
 
   for (const dir of legacyRegistryHint(root)) {
     log(`旧版注册表中的空间未被接管：${dir}`);

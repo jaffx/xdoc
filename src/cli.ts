@@ -20,17 +20,16 @@ xdoc - 支持空间与自定义嵌入体语法的 Markdown 文档浏览工具
   └── spaces/<空间>/  # meta.json + xdoc.config.ts + doc/
 
 不传数据根目录时使用 ~/.xdoc，也可用 XDOC_ROOT 环境变量指定。
-空间在网页左上角切换、新建与移除，无需在命令行指定。
+空间在网页左上角切换、新建与移除，无需在命令行指定；新 root 是空的，不预置
+任何示例空间。
 
 选项（优先级：命令行 > 环境变量 > <root>/config.json）：
       --root <路径>   数据根目录（等价于位置参数）
   -p, --port <端口>   监听端口（默认 1998，被占用时自动 +1 重试）
       --host <地址>   监听地址（默认 127.0.0.1）
-      --token <令牌>  访问令牌，等价于 XDOC_TOKEN
+      --token <令牌>  访问令牌，等价于 XDOC_TOKEN；不设则接口不鉴权（默认）
       --cert <路径>   TLS 证书（PEM），与 --key 一起用则提供 https
       --key <路径>    TLS 私钥（PEM）
-      --allow-anonymous
-                      监听非本机地址时不设令牌（默认拒绝启动）
       --no-open       不自动打开浏览器
   -h, --help          显示帮助
   -v, --version       显示版本
@@ -39,16 +38,18 @@ xdoc - 支持空间与自定义嵌入体语法的 Markdown 文档浏览工具
 
   <root>/config.json 首次运行会自动生成，默认就写成能对外用的样子：
 
-    { "host": "0.0.0.0", "token": "<自动生成的随机令牌>" }
+    { "host": "0.0.0.0" }
 
-  令牌在启动横幅里打印，浏览器打开后填一次即可。想自己指定就改这个文件，
-  或者用下面的 --host / --token 覆盖。之后起停都不用再带选项：
+  也就是监听所有网卡、不要令牌：浏览器打开就能看。想改监听地址或加一道令牌，
+  编辑这个文件（加 token 字段）或用下面的 --host / --token 覆盖。之后起停都
+  不用再带选项：
 
     scripts/init.sh --start                     # 装环境 + 构建 + 后台启动
     scripts/xdoc.sh restart                     # 改完 config.json 重启
 
-  MCP 端点是 http://<服务器>:1998/mcp，客户端带 Authorization: Bearer <令牌>。
-  令牌走的是明文 HTTP，要过公网请配 cert / key 启用 https（或挂在反向代理后面）。
+  MCP 端点是 http://<服务器>:1998/mcp。设了令牌的话客户端要带
+  Authorization: Bearer <令牌>。注意明文 HTTP 下令牌是裸奔的，要过公网请配
+  cert / key 启用 https（或挂在反向代理后面）。
 
 MCP 示例（Agent 配置，本地 stdio）：
   { "command": "npx", "args": ["xdoc", "mcp"] }
@@ -75,7 +76,6 @@ async function main() {
       token: { type: 'string' },
       cert: { type: 'string' },
       key: { type: 'string' },
-      'allow-anonymous': { type: 'boolean', default: false },
       open: { type: 'boolean', default: true },
       'no-open': { type: 'boolean', default: false },
       help: { type: 'boolean', short: 'h' },
@@ -142,23 +142,17 @@ async function main() {
     }
   }
 
-  // 监听非本机地址等于把读写删文档的接口放出去，没有令牌就直接拦下来，
-  // 免得一个手滑变成谁都能改你文档的公开服务
-  if (!isLoopback(host) && !token && !values['allow-anonymous']) {
-    console.error(`拒绝启动： --host ${host} 会对外提供服务，但没有设置访问令牌。`);
-    console.error(`请在 ${path.join(root, 'config.json')} 里写一个令牌，例如：`);
-    console.error('  { "host": "0.0.0.0", "token": "自己定一个足够长的随机串" }');
-    console.error('也可以用 --token <令牌> 或环境变量 XDOC_TOKEN 临时指定。');
-    console.error('确实不需要认证（如已在可信内网）就加 --allow-anonymous。');
-    process.exit(1);
-  }
   const running = await startServer({ root, port, host, token: token || undefined, tls });
   console.log('');
   console.log(`  xdoc 已启动 -> ${running.url}`);
+  console.log(`  MCP 端点： ${running.url}/mcp`);
   if (token) {
-    // 令牌直接打出来：默认配置里的令牌是随机生成的，不打印就没处抄
+    // 令牌直接打出来：手里有令牌的人才知道该填什么
     console.log(`  访问令牌： ${token}`);
-    console.log(`  MCP 端点： ${running.url}/mcp`);
+  } else if (!isLoopback(host)) {
+    // 默认就是不设令牌，所以不拦；但监听地址对外时得说清楚这意味着什么
+    console.log(`  未设令牌：能访问到 ${host}:${running.port} 的人都能读写这些文档`);
+    console.log(`  要加一道令牌：在 ${path.join(root, 'config.json')} 里写 token，或用 --token 指定`);
   }
   console.log('  按 Ctrl+C 停止');
   console.log('');

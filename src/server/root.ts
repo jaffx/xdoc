@@ -1,9 +1,7 @@
-import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
-import { cp, mkdir, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { expandHome } from './operations';
 
 /**
@@ -99,18 +97,6 @@ export function uniqueSlug(spacesDir: string, base: string): string {
   return `${base}-${index}`;
 }
 
-/** 内置模板目录；源码运行与 dist 运行的相对位置不同，逐个探测 */
-function findTemplatesDir(): string | null {
-  const here = path.dirname(fileURLToPath(import.meta.url));
-  const candidates = [
-    path.join(here, '..', 'templates'),
-    path.join(here, '..', '..', 'templates'),
-    path.join(here, '..', '..', '..', 'templates'),
-    path.join(process.cwd(), 'templates'),
-  ];
-  return candidates.find((dir) => existsSync(dir)) ?? null;
-}
-
 /** 列出 spaces/ 下的空间目录名（忽略 . 开头） */
 export async function listSpaceSlugs(root: string): Promise<string[]> {
   let entries;
@@ -125,54 +111,27 @@ export async function listSpaceSlugs(root: string): Promise<string[]> {
     .sort((a, b) => a.localeCompare(b));
 }
 
-export interface EnsureRootResult {
-  /** 首次初始化时从 templates/ 复制进来的空间目录名 */
-  seeded: string[];
-}
-
 /**
- * 补一份默认 config.json，默认就是「能对外用」的样子：监听 0.0.0.0 + 随机令牌。
- * 目的是 clone 到服务器上不用先手写配置，起来就能从外面访问，令牌在启动横幅里打印。
+ * 补一份默认 config.json，默认就是「挂到服务器上能直接用」的样子：监听 0.0.0.0、
+ * 不设令牌——本地浏览器打开就能看，不用先配任何东西。
  *
  * 不写 port：写进去等于"显式指定端口"，会让「端口被占用自动 +1」失效。
- * 已有文件一律不动，因此本地老 root 的行为不受影响。文件里有令牌，建成 0600。
+ * 已有文件一律不动，因此本地老 root 的行为不受影响。要鉴权就往里加 token；
+ * 文件里可能有令牌，建成 0600。
  */
 async function ensureConfigFile(root: string): Promise<void> {
   const file = path.join(root, CONFIG_FILE);
   if (existsSync(file)) return;
-  const settings = { host: '0.0.0.0', token: randomBytes(24).toString('base64url') };
+  const settings: Settings = { host: '0.0.0.0' };
   await writeFile(file, `${JSON.stringify(settings, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
 }
 
 /**
- * 幂等地准备好 root：建出 spaces/。
- * 仅在**首次初始化**（spaces/ 下还没有任何空间）时把内置 templates/ 复制进去，
- * 之后即使用户删光了空间也不会再次植入。
+ * 幂等地准备好 root：建出 spaces/ 与默认 config.json。
+ *
+ * 不植入任何示例空间——起来就是一个空的空间列表，要什么在网页里建。
  */
-export async function ensureRoot(root: string): Promise<EnsureRootResult> {
-  const spacesDir = spacesDirOf(root);
-  const firstRun = !existsSync(spacesDir);
-  await mkdir(spacesDir, { recursive: true });
+export async function ensureRoot(root: string): Promise<void> {
+  await mkdir(spacesDirOf(root), { recursive: true });
   await ensureConfigFile(root);
-  if (!firstRun) return { seeded: [] };
-
-  const templatesDir = findTemplatesDir();
-  if (!templatesDir) return { seeded: [] };
-
-  let templates;
-  try {
-    templates = await readdir(templatesDir, { withFileTypes: true });
-  } catch {
-    return { seeded: [] };
-  }
-
-  const seeded: string[] = [];
-  for (const template of templates) {
-    if (!template.isDirectory() || template.name.startsWith('.')) continue;
-    const target = path.join(spacesDir, template.name);
-    if (existsSync(target)) continue;
-    await cp(path.join(templatesDir, template.name), target, { recursive: true });
-    seeded.push(template.name);
-  }
-  return { seeded: seeded.sort((a, b) => a.localeCompare(b)) };
 }

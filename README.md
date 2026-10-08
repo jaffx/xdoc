@@ -7,7 +7,7 @@
 - 扩展机制 = **语法 + 渲染逻辑**，`registerEmbed` 注册，配置热加载
 - 本地浏览体验：目录树、搜索、TOC、实时刷新、代码高亮、亮暗主题、图片/链接站内跳转
 - 两侧面板都能收起：窄屏侧栏是遮罩抽屉，宽屏则由标题栏左侧按钮整条推出视口；右侧「本文目录」可折叠，收起状态记在 localStorage
-- 可部署到服务器：令牌保护、可选 HTTPS，浏览器与本地 Agent 都能远程读写，见[远程部署](#远程部署)
+- 可部署到服务器：默认无令牌、打开就能看，可选令牌与 HTTPS，浏览器与本地 Agent 都能远程读写，见[远程部署](#远程部署)
 
 ## 快速开始
 
@@ -18,7 +18,7 @@ git clone <repo> && cd xdoc
 ./xdoc
 ```
 
-首次运行会在 `~/.xdoc` 下植入示例空间并自动打开浏览器。其余参数原样转给 CLI：
+首次运行会建好 `~/.xdoc`（**空的空间列表，不预置任何示例**）并自动打开浏览器。其余参数原样转给 CLI：
 
 ```bash
 ./xdoc ~/my-docs --port 4000     # 指定数据根目录与端口
@@ -107,9 +107,9 @@ scripts/deploy.sh root@1.2.3.4
 ```
 
 它 ssh 上去 clone（仓库是公开的，服务器上无需配 GitHub 密钥；已有代码就
-`git pull`）→ 跑 `scripts/init.sh --start` → 从日志里取回令牌 → 打印访问地址、
-MCP 端点与现成的 Agent 配置。**装 Node、装依赖、构建都在服务器上做**，本地只要
-ssh 能免密登录。
+`git pull`）→ 跑 `scripts/init.sh --start` → 打印访问地址、MCP 端点，设了令牌的话
+连 Agent 配置一起给。**装 Node、装依赖、构建都在服务器上做**，本地只要 ssh 能
+免密登录。
 
 > 端口默认 1998，其余选项见 `scripts/deploy.sh -h`；`--dry-run` 可以只看它打算
 > 在服务器上执行什么。
@@ -122,49 +122,49 @@ scripts/init.sh --start          # 装 Node → 装依赖 → 构建 → 后台�
 ```
 
 `<root>/config.json`（默认 `~/.xdoc/config.json`）首次运行会自动生成，默认就写成
-**能对外用**的样子——监听 `0.0.0.0` + 随机令牌，权限 0600：
+**能对外用**的样子——监听 `0.0.0.0`、不设令牌，权限 0600：
 
 ```json
 {
-  "host": "0.0.0.0",
-  "token": "N3f...（自动生成的随机串）"
+  "host": "0.0.0.0"
 }
 ```
 
-**令牌会打印在启动横幅里**，也是唯一需要记住的东西：
+也就是说浏览器打开 `http://<服务器>:1998` 直接就能看，**没有登录这一步**。
+启动横幅会照实说明当前是不是在裸奔：
 
 ```
   xdoc 已启动 -> http://localhost:1998
-  访问令牌： N3f...（复制这串）
   MCP 端点： http://localhost:1998/mcp
+  未设令牌：能访问到 0.0.0.0:1998 的人都能读写这些文档
 ```
 
-服务器上让进程跑在后台、拿启动横幅与日志：
+服务器上让进程跑在后台：
 
 ```bash
 scripts/xdoc.sh start      # 后台启动（读 config.json）
-scripts/xdoc.sh logs       # 看横幅里的令牌
+scripts/xdoc.sh logs       # 看启动横幅
 ```
 
 环境已经齐了也可以前台跑：`./xdoc`。
 
-想换令牌或改端口，编辑 config.json 后 `scripts/xdoc.sh restart`。
+想改监听地址、端口或加令牌，编辑 config.json 后 `scripts/xdoc.sh restart`。
 
-`token` 是**共享令牌**，一个字符串就够了。启动后：
+不加令牌时 `/api/*` 与 `/mcp` 都不鉴权——**知道地址的人就能读写、删除文档**，
+自己内网或临时看看无所谓，别把这种实例挂在公网上。
 
-- `/api/*` 与 `/mcp` 都要求 `Authorization: Bearer <令牌>`（浏览器里也可以用
-  `?token=<令牌>`，因为 `<img>` 和 `EventSource` 设不了请求头）
+要一道令牌，就在 config.json 里加个 `token`（或 `--token` / `XDOC_TOKEN`）：
+
+```json
+{ "host": "0.0.0.0", "token": "自己定一个足够长的随机串" }
+```
+
+- `token` 是**共享令牌**，一个字符串就够了；`/api/*` 与 `/mcp` 都要求
+  `Authorization: Bearer <令牌>`（浏览器里也可以用 `?token=<令牌>`，因为
+  `<img>` 和 `EventSource` 设不了请求头）
 - 静态资源（页面本身、`app.js`、`styles.css`）不要求令牌，否则页面都打不开，
   也就没法让你输入令牌
 - 网页会弹一次令牌输入框，填对后存在浏览器里，往后不用再填
-- 服务器没有令牌又想监听 `0.0.0.0`？xdoc 会**拒绝启动**，除非你明确加
-  `--allow-anonymous`。手滑把读写删文档的接口开放给全网这件事，值得多一道拦截
-
-默认生成的令牌就是个随机串，嫌长就自己换短一点的，反正只有你在用：
-
-```json
-{ "host": "0.0.0.0", "token": "xdoc" }
-```
 
 ### 3. 放行端口
 
@@ -212,12 +212,12 @@ WantedBy=multi-user.target
 sudo systemctl daemon-reload && sudo systemctl enable --now xdoc
 ```
 
-监听地址、端口、令牌都写在 `config.json` 里，因此 `ExecStart` 不用带任何参数；
+监听地址、端口、令牌（如果设了）都写在 `config.json` 里，因此 `ExecStart` 不用带任何参数；
 以哪个用户跑，就写哪个用户的 `<root>/config.json`。
 
 ### 6. 本地接上
 
-浏览器直接开 `http://server:1998`，输入一次令牌即可。MCP 客户端的配置见
+浏览器直接开 `http://server:1998` 就能看；设了令牌的话输入一次即可。MCP 客户端的配置见
 [MCP - 远程调用（HTTP 端点）](#远程调用http-端点)。
 
 ### 部署参数从哪来
@@ -258,7 +258,7 @@ xdoc --root ~/my-docs
 XDOC_ROOT=~/my-docs xdoc
 ```
 
-**首次初始化**（`spaces/` 还不存在）时，仓库 `templates/` 下的示例空间会被复制进 `<root>/spaces/`，方便直接上手。之后即使把空间全删了也不会再次植入。
+新 root 是**空的**：只建出 `spaces/` 与默认 `config.json`，不预置任何示例空间，第一个空间在网页里新建。
 
 root 默认落在用户主目录，不在仓库内，因此文档不会随 xdoc 自身的 git 提交。
 
@@ -516,7 +516,8 @@ curl -X POST http://server:1998/mcp \
 - 无状态，不分配 `Mcp-Session-Id`
 - 校验 `Origin` 与 `Host` 是否一致，不一致回 403 —— 挡住浏览器页面跨站打这个端点
   的 DNS rebinding
-- 受令牌保护，与 `/api/*` 同一套（`Authorization: Bearer` 或 `?token=`）
+- 设了令牌时与 `/api/*` 同一套鉴权（`Authorization: Bearer` 或 `?token=`）；
+  没设就谁都能调
 
 客户端配置：支持 Streamable HTTP 的客户端直接填 URL 与令牌。Claude Desktop 目前
 需要 `mcp-remote` 之类的桥接：
@@ -608,11 +609,9 @@ xdoc mcp [数据根目录]        启动 MCP stdio 服务
   -p, --port <端口>   监听端口（默认 1998）。不显式指定时，被占用会自动 +1 重试
                       （1998、1999…）；显式指定则直接报错，不会悄悄换端口
       --host <地址>   监听地址（默认 127.0.0.1）
-      --token <令牌>  访问令牌，等价于 XDOC_TOKEN；设了则 /api/* 与 /mcp 都要令牌
+      --token <令牌>  访问令牌，等价于 XDOC_TOKEN；不设则接口不鉴权（默认）
       --cert <路径>   TLS 证书（PEM），与 --key 一起用则提供 https
       --key <路径>    TLS 私钥（PEM）
-      --allow-anonymous
-                      监听非本机地址时不设令牌（默认拒绝启动）
       --no-open       不自动打开浏览器
   -h, --help          显示帮助
   -v, --version       显示版本
@@ -637,7 +636,7 @@ src/
 │   └── embeds/         # 内置嵌入体 html / highlight / table / mermaid / echarts
 ├── server/
 │   ├── index.ts        # HTTP 服务与路由
-│   ├── root.ts         # 数据根目录：解析、首次植入模板、目录名派生
+│   ├── root.ts         # 数据根目录：解析、建 spaces/ 与默认 config.json、目录名派生
 │   ├── space.ts        # SpaceManager：多空间运行时（dir + docRoot/监听/配置热加载）
 │   ├── meta.ts         # 空间身份与目录初始化（meta.json、doc/、旧目录迁移）
 │   ├── operations.ts   # 文档操作：新建/写入/替换/移动/删除/检索（HTTP 与 MCP 共用）

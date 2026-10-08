@@ -79,20 +79,19 @@ xdoc 服务器初始化
   --start               构建完直接后台启动（等价 scripts/xdoc.sh start）
   -p, --port <端口>     启动端口，默认 1998
       --host <地址>     监听地址，对外提供服务要 0.0.0.0（默认 127.0.0.1）
-      --token <令牌>    访问令牌；监听非本机地址时**必须**有令牌，否则拒绝启动
+      --token <令牌>    访问令牌；不设就谁都能看（默认如此，见 <root>/config.json）
       --cert <路径>     TLS 证书（PEM），与 --key 一起用则提供 https
       --key <路径>      TLS 私钥（PEM）
   -h, --help            显示帮助
 
 示例：
   scripts/init.sh --check-only              # 先看看这台机器行不行
-  scripts/init.sh --start                   # 一条龙：装环境 + 构建 + 起服务（只监听本机）
-  scripts/init.sh --start --host 0.0.0.0 --token <令牌>
-                                            # 部署到服务器：对外提供服务
+  scripts/init.sh --start                   # 一条龙：装环境 + 构建 + 起服务
+  scripts/init.sh --start --token <令牌>     # 同上，但顺手加一道令牌
   scripts/init.sh --prefix ~/.local --swap 2048
 
-这几个部署参数也可以写进 <root>/config.json（默认 ~/.xdoc/config.json），
-之后起停就不用再带：
+这几个部署参数也可以写进 <root>/config.json（默认 ~/.xdoc/config.json，首次
+运行自动生成 { "host": "0.0.0.0" }），之后起停就不用再带。想鉴权就往里加：
   { "host": "0.0.0.0", "token": "自己定一个足够长的随机串" }
 EOF
 }
@@ -418,12 +417,8 @@ ensure_build() {
 
 start_service() {
   [ "$DO_START" -eq 1 ] || return 0
-  # 不传 --token 也行：CLI 会读 <root>/config.json，首次运行还会自动生成一份
-  # 随机令牌。这里只是提前说明令牌从哪来，免得用户不知道去哪找
-  if [ -z "$TOKEN" ] && [ -n "$HOST" ] && [ "$HOST" != "127.0.0.1" ] && [ "$HOST" != "localhost" ]; then
-    info "  没指定 --token：用 <root>/config.json 里的令牌（首次运行自动生成，启动后见下）"
-  fi
-
+  # 令牌不再是必需项（不设就是不鉴权），所以这里不拦也不猜——到底有没有令牌、
+  # 监听在哪，CLI 的启动横幅会照实打出来
   local -a args=(start -p "$PORT")
   [ -n "$HOST" ] && args+=(--host "$HOST")
   [ -n "$TOKEN" ] && args+=(--token "$TOKEN")

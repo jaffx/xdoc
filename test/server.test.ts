@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { request as httpsRequest } from 'node:https';
 import os from 'node:os';
@@ -233,38 +233,27 @@ test('空间创建与元数据：备注、重命名、重启恢复', async () =>
   }
 });
 
-test('首次初始化数据根目录：植入内置模板', async () => {
+test('首次初始化数据根目录：空的 spaces/ 与默认 config.json', async () => {
   const base = await mkdtemp(path.join(os.tmpdir(), 'xdoc-init-'));
   const root = path.join(base, 'fresh-root');
 
   const server = await startServer({ root, port: 0 });
   try {
-    const spaces = (await (await fetch(`http://127.0.0.1:${server.port}/api/spaces`)).json()) as SpacePayload[];
-    assert.ok(spaces.length >= 2, '应从 templates/ 植入示例空间');
-    assert.ok(spaces.some((space) => space.name === 'examples'));
-
-    // 模板带着备注一起复制，并生成独立的 id
-    const examples = spaces.find((space) => space.name === 'examples')!;
-    assert.equal(examples.description, '内置嵌入体与自定义扩展示例');
-
-    const seededMeta = JSON.parse(
-      await readFile(path.join(spaceDir(root, 'examples'), 'meta.json'), 'utf8'),
-    ) as { id: string };
-    assert.equal(seededMeta.id, examples.id);
-
-    const templateMeta = JSON.parse(
-      await readFile(path.join(process.cwd(), 'templates', 'examples', 'meta.json'), 'utf8'),
-    ) as { id?: string };
-    assert.equal(templateMeta.id, undefined, '模板自身不带 id，每个 root 生成独立身份');
-
-    // 空间根的 xdoc.config.ts 一起复制，自定义嵌入体可用
-    assert.ok(existsSync(path.join(spaceDir(root, 'examples'), 'xdoc.config.ts')));
-    const doc = (await (
-      await fetch(`http://127.0.0.1:${server.port}/api/doc?space=${examples.id}&path=index.md`)
-    ).json()) as { html: string };
-    assert.ok(doc.html.length > 0);
+    // 不预置示例空间；而且不带任何令牌就能列出来（默认不鉴权）
+    const response = await fetch(`http://127.0.0.1:${server.port}/api/spaces`);
+    assert.equal(response.status, 200, '没设令牌时不该要求鉴权');
+    const spaces = (await response.json()) as SpacePayload[];
+    assert.deepEqual(spaces, [], '新 root 不植入任何示例空间');
 
     assert.ok(existsSync(path.join(root, 'index.json')));
+    assert.ok(existsSync(path.join(root, 'spaces')));
+
+    // 默认配置：监听 0.0.0.0、不设令牌，0600
+    const configFile = path.join(root, 'config.json');
+    const settings = JSON.parse(await readFile(configFile, 'utf8')) as { host?: string; token?: string };
+    assert.equal(settings.host, '0.0.0.0');
+    assert.equal(settings.token, undefined);
+    assert.equal((await stat(configFile)).mode & 0o777, 0o600);
   } finally {
     await server.close();
     await rm(base, { recursive: true, force: true });

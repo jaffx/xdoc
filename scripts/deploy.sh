@@ -195,11 +195,11 @@ fi
 info "完成：xdoc 已在 $TARGET 上跑起来。"
 info ''
 info "  访问地址：$URL"
+info "  MCP 端点：$URL/mcp"
 if [ -n "$REMOTE_TOKEN" ]; then
   info "  访问令牌：$REMOTE_TOKEN"
-  info "  MCP 端点：$URL/mcp"
 else
-  info "  访问令牌：没从日志里读到（起服务时没设令牌？）"
+  info "  未设令牌：浏览器打开就能看（要加令牌就在 config.json 里写 token）"
 fi
 info ''
 if [ "$REACHABLE" -eq 0 ]; then
@@ -210,9 +210,9 @@ if [ "$REACHABLE" -eq 0 ]; then
   info ''
 fi
 
+info "浏览器打开上面地址就能看。Agent 端（Claude Desktop 走 mcp-remote）："
+info ''
 if [ -n "$REMOTE_TOKEN" ]; then
-  info "浏览器打开上面地址，令牌填一次即可。Agent 端（Claude Desktop 走 mcp-remote）："
-  info ''
   cat <<EOF
   {
     "mcpServers": {
@@ -225,6 +225,17 @@ if [ -n "$REMOTE_TOKEN" ]; then
     }
   }
 EOF
-  info ''
+else
+  cat <<EOF
+  {
+    "mcpServers": {
+      "xdoc-remote": {
+        "command": "npx",
+        "args": ["-y", "mcp-remote", "$URL/mcp"]
+      }
+    }
+  }
+EOF
 fi
+info ''
 info "  起停：ssh $TARGET 'cd $DIR && scripts/xdoc.sh {start|stop|restart|status|logs}'"

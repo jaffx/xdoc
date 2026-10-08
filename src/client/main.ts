@@ -39,6 +39,7 @@ const els = {
   sidebar: $('#sidebar'),
   customStyles: $('#custom-styles'),
   embedCount: $('#embed-count'),
+  treeToolbar: $('#tree-toolbar'),
   spaceSwitch: $('#space-switch'),
   spaceBtn: $('#space-btn'),
   spaceBtnName: $('#space-btn-name'),
@@ -664,6 +665,7 @@ function renderTree() {
   cancelPendingInput();
   dirItems.clear();
   dirLists.clear();
+  els.treeToolbar.hidden = false;
   els.tree.innerHTML = '';
   els.tree.append(buildList(tree));
   markActive();
@@ -759,8 +761,10 @@ function findDefaultDoc(nodes: TreeNode[]): string | null {
 
 function showEmptySpaces() {
   current = null;
+  // 没有空间时「新建文件 / 新建文件夹」无处可放，点了也只会静默失败，索性收起来
+  els.treeToolbar.hidden = true;
   els.tree.innerHTML = '';
-  els.content.innerHTML = '<div class="empty"><h1>没有可用空间</h1><p>在下方输入目录路径添加一个空间。</p></div>';
+  els.content.innerHTML = '<div class="empty"><h1>还没有空间</h1><p>点左上角的「选择空间」→「新建空间」，建一个就能开始写文档。</p></div>';
   els.exportBtn.hidden = true;
   setCrumb(['首页']);
   renderSpaces();
