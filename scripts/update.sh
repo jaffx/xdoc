@@ -90,13 +90,14 @@ $(git -C "$REPO_DIR" status --short)"
 
   before="$(git -C "$REPO_DIR" rev-parse HEAD)"
   target="${BRANCH:-$(git -C "$REPO_DIR" rev-parse --abbrev-ref HEAD)}"
-  git -C "$REPO_DIR" pull --ff-only origin "$target" || die "拉取失败：本地可能有分叉，或远端没配好"
+  # --quiet：拉到什么提交下面自己会打，不用 git 再报一遍文件级摘要
+  git -C "$REPO_DIR" pull --ff-only --quiet origin "$target" || die "拉取失败：本地可能有分叉，或远端没配好"
   after="$(git -C "$REPO_DIR" rev-parse HEAD)"
 
   if [ "$before" = "$after" ]; then
     info "  已是最新：$(git -C "$REPO_DIR" log --oneline -1)"
   else
-    info "  更新：$(git -C "$REPO_DIR" log --oneline -1 "$before") -> $(git -C "$REPO_DIR" log --oneline -1 "$after")"
+    info "  更新：${before:0:7} -> ${after:0:7}"
     git -C "$REPO_DIR" log --oneline "$before..$after" | sed 's/^/    /'
     CHANGED="$(git -C "$REPO_DIR" diff --name-only "$before" "$after")"
   fi
