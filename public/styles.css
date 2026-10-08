@@ -913,6 +913,106 @@ html[data-theme='dark'] .content pre code .hljs-variable, html[data-theme='dark'
   white-space: pre-wrap;
 }
 
+/* ---- 图表点击放大（见 client/lightbox.ts） ---- */
+.xdoc-mermaid.is-zoomable { position: relative; }
+.xdoc-mermaid.is-zoomable .xdoc-mermaid__view { cursor: zoom-in; }
+.xdoc-mermaid.is-zoomable .xdoc-mermaid__view:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* 徽标只是提示，别挡点击：pointer-events 交给下面的图 */
+.xdoc-mermaid__zoom {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px 4px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel) 86%, transparent);
+  backdrop-filter: blur(4px);
+  font-size: 12px;
+  color: var(--text-mute);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  pointer-events: none;
+}
+.xdoc-mermaid__zoom svg { width: 13px; height: 13px; flex: none; }
+.xdoc-mermaid.is-zoomable:hover .xdoc-mermaid__zoom,
+.xdoc-mermaid.is-zoomable:focus-within .xdoc-mermaid__zoom { opacity: 1; }
+/* 触屏没有 hover，徽标常显但压低存在感 */
+@media (hover: none) {
+  .xdoc-mermaid__zoom { opacity: 0.75; }
+}
+
+.xdoc-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.55);
+}
+/* 定宽、高度随内容：缩放时面板不跟着图变宽变窄，右上角的按钮就不会在鼠标底下乱跑；
+   高度不撑满，小图不会裹在一个大半空的框里 */
+.xdoc-lightbox__panel {
+  display: flex;
+  flex-direction: column;
+  width: min(1120px, 94vw);
+  max-height: 88vh;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+.xdoc-lightbox__head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 10px 8px 14px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.xdoc-lightbox__title { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.xdoc-lightbox__title strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.xdoc-lightbox__hint { color: var(--text-mute); flex: none; }
+.xdoc-lightbox__controls { display: flex; align-items: center; gap: 6px; flex: none; }
+.xdoc-lightbox__btn {
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--text-soft);
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 9px;
+  cursor: pointer;
+}
+.xdoc-lightbox__btn:hover { background: var(--accent-soft); color: var(--text); }
+.xdoc-lightbox__pct { min-width: 52px; text-align: center; color: var(--text-mute); }
+/* flex 子项必须 min-height: 0 + flex: 1，否则内容把面板撑高、被 overflow 裁掉且不出滚动条 */
+.xdoc-lightbox__body {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  padding: 18px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  /* 图和正文里的图一样铺在 panel 色上，暗色主题下 mermaid 的文字才看得清 */
+  background: var(--panel);
+}
+
 /* ============ TOC ============ */
 .toc {
   width: var(--toc-w);

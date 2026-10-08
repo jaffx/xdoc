@@ -6,6 +6,8 @@
  * 文档里没有对应嵌入体时，两者都不会被请求。
  */
 
+import { openLightbox } from './lightbox';
+
 type Theme = 'light' | 'dark';
 
 interface MermaidApi {
@@ -86,6 +88,45 @@ function showError(view: HTMLElement, message: string) {
   view.append(box);
 }
 
+// ---------- 点击放大 ----------
+
+const ZOOM_ICON =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="m16.2 16.2 4.3 4.3"/><path d="M11 8.4v5.2M8.4 11h5.2"/></svg>';
+
+/**
+ * 给渲染好的图挂上「点一下放大」。
+ *
+ * 监听挂在 __view 上而不是里面的 svg：换主题重渲染会替换 svg，而 __view 这个
+ * 元素一直在，监听和 tabindex 不用重挂，因此只做一次。
+ */
+function makeZoomable(figure: HTMLElement): void {
+  const view = figure.querySelector<HTMLElement>('.xdoc-mermaid__view');
+  if (!view || figure.dataset.zoomable === '1') return;
+  figure.dataset.zoomable = '1';
+  figure.classList.add('is-zoomable');
+
+  view.tabIndex = 0;
+  view.setAttribute('role', 'button');
+  view.setAttribute('aria-label', '放大查看图表');
+
+  const hint = document.createElement('span');
+  hint.className = 'xdoc-mermaid__zoom';
+  hint.innerHTML = `${ZOOM_ICON}<span>点击放大</span>`;
+  figure.append(hint);
+
+  const open = () => {
+    const svg = view.querySelector('svg');
+    if (!(svg instanceof SVGSVGElement)) return;
+    openLightbox(svg, figure.querySelector('figcaption')?.textContent ?? undefined);
+  };
+  view.addEventListener('click', open);
+  view.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    open();
+  });
+}
+
 // ---------- mermaid ----------
 
 let mermaidTheme: Theme | null = null;
@@ -117,6 +158,7 @@ async function renderMermaid(figure: HTMLElement, theme: Theme) {
     const { svg } = await api.render(`xdoc-mermaid-${++mermaidSeq}`, source);
     view.innerHTML = svg;
     figure.dataset.rendered = theme;
+    makeZoomable(figure);
   } catch (error) {
     showError(view, `mermaid 渲染失败：${error instanceof Error ? error.message : String(error)}`);
   }
