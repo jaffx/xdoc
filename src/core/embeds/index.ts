@@ -1,9 +1,16 @@
 import type { EmbedDefinition } from '../types';
 import { calloutEmbed } from './callout';
+import { echartsEmbed } from './echarts';
 import { htmlEmbed } from './html';
+import { mermaidEmbed } from './mermaid';
 import { tableEmbed } from './table';
-import { todoEmbed } from './todo';
 
-export const builtinEmbeds: EmbedDefinition[] = [htmlEmbed, calloutEmbed, todoEmbed, tableEmbed];
+export const builtinEmbeds: EmbedDefinition[] = [
+  htmlEmbed,
+  calloutEmbed,
+  tableEmbed,
+  mermaidEmbed,
+  echartsEmbed,
+];
 
-export { calloutEmbed, htmlEmbed, tableEmbed, todoEmbed };
+export { calloutEmbed, echartsEmbed, htmlEmbed, mermaidEmbed, tableEmbed };

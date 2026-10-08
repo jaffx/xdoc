@@ -5,15 +5,13 @@ import {
   appendDoc,
   deleteEntry,
   editDoc,
-  expandHome,
   OperationError,
   readDoc,
   renameEntry,
-  scaffoldSpaceDir,
   searchDocs,
   writeDoc,
 } from '../server/operations';
-import { savePersistedSpaces } from '../server/persistence';
+import { loadIndex, saveIndex } from '../server/persistence';
 import { SpaceManager, type SpaceRuntime } from '../server/space';
 import { listDocPaths } from '../server/tree';
 
@@ -70,7 +68,101 @@ function asNumber(args: JsonObject, key: string): number | undefined {
 const SPACE_PROP = { type: 'string', description: '空间 id 或名称，缺省为第一个空间' };
 const PATH_PROP = { type: 'string', description: '空间内的相对路径，如 "guide/intro.md"' };
 
-function buildTools(manager: SpaceManager, persistRegistry: () => void): ToolDefinition[] {
+/**
+ * 写文档的排版指南。
+ *
+ * MCP 客户端通常只读 initialize 的 instructions 与工具 description，
+ * 因此这里既作为 instructions 的主体，也通过 style_guide 工具单独提供。
+ */
+const STYLE_GUIDE = `# xdoc 文档排版指南
+
+xdoc 支持 \`:::名称 参数 ... :::\` 的块级嵌入体语法。写文档时优先用嵌入体表达结构，
+不要把所有内容堆成纯段落——排版好的文档在 xdoc 网页端可读性高得多。
+
+## 内置嵌入体
+
+### 提示块 highlight
+别名直接当名字用：\`note\`（说明）、\`info\`（信息）、\`tip\`（提示）、\`success\`（完成）、
+\`warning\`（注意）、\`danger\`（危险）。第一个位置参数是标题，内部支持完整 markdown。
+
+\`\`\`
+:::tip 性能建议
+开启缓存后首屏可以快 **40%** 左右。
+:::
+
+:::danger 不可逆操作
+执行前请先备份数据库。
+:::
+\`\`\`
+
+### 表格 table
+\`:::table title="..." zebra bordered compact\`。内容可以写 markdown 表格，
+也可以直接写原始 HTML —— 需要合并单元格时用 HTML 的 \`colspan\` / \`rowspan\`：
+
+\`\`\`
+:::table title="分区域销量" bordered
+<table>
+  <thead>
+    <tr><th rowspan="2">区域</th><th colspan="2">上半年</th></tr>
+    <tr><th>销量</th><th>同比</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>华东</td><td>1,280</td><td>+12%</td></tr>
+  </tbody>
+</table>
+:::
+\`\`\`
+
+只写 \`<tr>\` 片段也可以，会自动补一层 \`<table>\`。
+
+### mermaid 图
+\`:::mermaid title="..."\`（别名 \`diagram\`），块内写 mermaid 源码。
+流程、时序、状态、甘特、类图都支持，图表跟随亮暗主题重绘。
+讲流程、架构、状态流转时用图代替长段文字描述。
+
+\`\`\`
+:::mermaid title="请求链路"
+flowchart LR
+  A[客户端] --> B{缓存命中?}
+  B -- 是 --> C[返回缓存]
+  B -- 否 --> D[查库] --> E[写缓存] --> C
+:::
+\`\`\`
+
+### echarts 图表
+\`:::echarts title="..." height=320\`（别名 \`chart\`），块内写 ECharts option，
+支持 JSON 与 JS 对象字面量。有数值趋势、占比、对比时用图表而不是罗列数字。
+
+\`\`\`
+:::echarts title="每周新增" height=300
+{
+  tooltip: { trigger: 'axis' },
+  xAxis: { type: 'category', data: ['第1周', '第2周', '第3周'] },
+  yAxis: { type: 'value' },
+  series: [{ type: 'bar', data: [12, 19, 24] }]
+}
+:::
+\`\`\`
+
+### 原始 HTML html
+\`:::html\` 内容原样输出、不做 markdown 解析，适合 iframe、视频、自定义卡片。
+
+### 嵌套
+外层用更长的冒号标记即可嵌套：外层 \`::::\`，内层 \`:::\`。
+
+## 写作约定
+
+1. 文档首行是 \`# 一级标题\`，正文用 \`##\` / \`###\` 分节（网页端 TOC 取 h2/h3）
+2. 关键结论、前置条件、风险提示放进 \`:::tip\` / \`:::warning\` / \`:::danger\`，不要埋在段落里
+3. 结构化数据一律进 \`:::table\`，带上 \`title\`
+4. 流程与架构画 \`:::mermaid\`；趋势与占比画 \`:::echarts\`
+5. 代码块标注语言以启用高亮
+6. 文档间用相对路径链接（\`[指南](./guide/intro.md)\`），图片放文档同级目录并用相对路径引用
+7. 写完可用 render_markdown 验证嵌入体语法是否正确
+
+注意：当前空间可能通过 xdoc.config.ts 注册了额外的嵌入体，写之前先调 list_embeds 看实际可用列表。`;
+
+function buildTools(manager: SpaceManager, persistIndex: () => void): ToolDefinition[] {
   const resolveSpace = (value: unknown): SpaceRuntime => {
     const spaces = manager.list();
     if (spaces.length === 0) throw new OperationError('尚未加载任何空间');
@@ -86,7 +178,7 @@ function buildTools(manager: SpaceManager, persistRegistry: () => void): ToolDef
   return [
     {
       name: 'list_spaces',
-      description: '列出所有空间：id、名称、备注、根目录、文档数量',
+      description: '列出所有空间：id、名称、备注、目录名、空间目录、文档根目录、文档数量',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       handler: async () => ({
         spaces: await Promise.all(
@@ -94,42 +186,32 @@ function buildTools(manager: SpaceManager, persistRegistry: () => void): ToolDef
             id: space.id,
             name: space.name,
             description: space.description ?? null,
-            root: space.root,
-            source: space.source,
-            docCount: (await listDocPaths(space.root)).length,
+            slug: space.slug,
+            dir: space.dir,
+            docRoot: space.docRoot,
+            docCount: (await listDocPaths(space.docRoot)).length,
           })),
         ),
       }),
     },
     {
       name: 'create_space',
-      description: '新建空间；目录不存在时自动创建并生成 index.md，备注等信息会被持久化',
+      description: '按名称新建空间，目录自动建在数据根目录的 spaces/ 下，并生成 meta.json 与 doc/index.md',
       inputSchema: {
         type: 'object',
         properties: {
-          path: { type: 'string', description: '空间根目录，支持 ~ 开头' },
-          name: { type: 'string', description: '空间名称，默认取目录名' },
+          name: { type: 'string', description: '空间名称，目录名由名称派生' },
           description: { type: 'string', description: '空间备注' },
-          create: { type: 'boolean', description: '目录不存在时是否创建目录，默认 true' },
         },
-        required: ['path'],
+        required: ['name'],
         additionalProperties: false,
       },
       handler: async (args) => {
-        const target = path.resolve(expandHome(asString(args, 'path')));
-        const name = asOptionalString(args, 'name');
-        if (args.create !== false) await scaffoldSpaceDir(target, name);
-        const now = Date.now();
-        const { space, created } = await manager.add({
-          root: target,
-          name,
+        const { space, created } = await manager.create({
+          name: asString(args, 'name'),
           description: asOptionalString(args, 'description'),
-          source: 'user',
-          tracked: true,
-          createdAt: now,
-          updatedAt: now,
         });
-        if (created) persistRegistry();
+        if (created) persistIndex();
         return { space, created };
       },
     },
@@ -148,11 +230,10 @@ function buildTools(manager: SpaceManager, persistRegistry: () => void): ToolDef
       },
       handler: async (args) => {
         const runtime = resolveSpace(args.space);
-        const space = runtime.updateMetadata({
+        const space = await runtime.updateMetadata({
           name: typeof args.name === 'string' ? args.name : undefined,
           description: typeof args.description === 'string' ? args.description : undefined,
         });
-        persistRegistry();
         return { space };
       },
     },
@@ -162,7 +243,7 @@ function buildTools(manager: SpaceManager, persistRegistry: () => void): ToolDef
       inputSchema: { type: 'object', properties: { space: SPACE_PROP }, additionalProperties: false },
       handler: async (args) => {
         const runtime = resolveSpace(args.space);
-        return { space: runtime.info.id, docs: await listDocPaths(runtime.info.root) };
+        return { space: runtime.info.id, docs: await listDocPaths(runtime.info.docRoot) };
       },
     },
     {
@@ -180,11 +261,11 @@ function buildTools(manager: SpaceManager, persistRegistry: () => void): ToolDef
       },
       handler: async (args) => {
         const runtime = resolveSpace(args.space);
-        const { path: rel, content } = await readDoc(runtime.info.root, asString(args, 'path'));
+        const { path: rel, content } = await readDoc(runtime.info.docRoot, asString(args, 'path'));
         if (args.format === 'html') {
           return {
             path: rel,
-            html: runtime.renderer.render(content, { path: rel, root: runtime.info.root, space: runtime.info.id }),
+            html: runtime.renderer.render(content, { path: rel, root: runtime.info.docRoot, space: runtime.info.id }),
           };
         }
         return { path: rel, content };
@@ -192,7 +273,8 @@ function buildTools(manager: SpaceManager, persistRegistry: () => void): ToolDef
     },
     {
       name: 'write_doc',
-      description: '创建或覆盖文档（仅 .md/.markdown），自动补扩展名、自动创建父目录',
+      description:
+        '创建或覆盖文档（仅 .md/.markdown），自动补扩展名、自动创建父目录。内容请用 xdoc 嵌入体排版（提示块 :::tip、表格 :::table、流程图 :::mermaid、图表 :::echarts），写前可先读 style_guide',
       inputSchema: {
         type: 'object',
         properties: { space: SPACE_PROP, path: PATH_PROP, content: { type: 'string', description: 'markdown 内容' } },
@@ -202,7 +284,7 @@ function buildTools(manager: SpaceManager, persistRegistry: () => void): ToolDef
       handler: async (args) => {
         const runtime = resolveSpace(args.space);
         const content = asString(args, 'content');
-        const rel = await writeDoc(runtime.info.root, asString(args, 'path'), content);
+        const rel = await writeDoc(runtime.info.docRoot, asString(args, 'path'), content);
         return { space: runtime.info.id, path: rel, bytes: Buffer.byteLength(content) };
       },
     },
@@ -217,7 +299,7 @@ function buildTools(manager: SpaceManager, persistRegistry: () => void): ToolDef
       },
       handler: async (args) => {
         const runtime = resolveSpace(args.space);
-        const rel = await appendDoc(runtime.info.root, asString(args, 'path'), asString(args, 'content'));
+        const rel = await appendDoc(runtime.info.docRoot, asString(args, 'path'), asString(args, 'content'));
         return { space: runtime.info.id, path: rel };
       },
     },
@@ -239,7 +321,7 @@ function buildTools(manager: SpaceManager, persistRegistry: () => void): ToolDef
       handler: async (args) => {
         const runtime = resolveSpace(args.space);
         const result = await editDoc(
-          runtime.info.root,
+          runtime.info.docRoot,
           asString(args, 'path'),
           asString(args, 'old_text'),
           typeof args.new_text === 'string' ? args.new_text : '',
@@ -263,7 +345,7 @@ function buildTools(manager: SpaceManager, persistRegistry: () => void): ToolDef
       },
       handler: async (args) => {
         const runtime = resolveSpace(args.space);
-        const rel = await renameEntry(runtime.info.root, asString(args, 'from'), asString(args, 'to'));
+        const rel = await renameEntry(runtime.info.docRoot, asString(args, 'from'), asString(args, 'to'));
         return { space: runtime.info.id, path: rel };
       },
     },
@@ -282,7 +364,7 @@ function buildTools(manager: SpaceManager, persistRegistry: () => void): ToolDef
       },
       handler: async (args) => {
         const runtime = resolveSpace(args.space);
-        const rel = await deleteEntry(runtime.info.root, asString(args, 'path'), asBoolean(args, 'recursive'));
+        const rel = await deleteEntry(runtime.info.docRoot, asString(args, 'path'), asBoolean(args, 'recursive'));
         return { space: runtime.info.id, path: rel, deleted: true };
       },
     },
@@ -303,7 +385,7 @@ function buildTools(manager: SpaceManager, persistRegistry: () => void): ToolDef
       },
       handler: async (args) => {
         const runtime = resolveSpace(args.space);
-        const matches = await searchDocs(runtime.info.root, asString(args, 'query'), {
+        const matches = await searchDocs(runtime.info.docRoot, asString(args, 'query'), {
           regex: asBoolean(args, 'regex'),
           caseSensitive: asBoolean(args, 'case_sensitive'),
           limit: asNumber(args, 'limit'),
@@ -313,20 +395,30 @@ function buildTools(manager: SpaceManager, persistRegistry: () => void): ToolDef
     },
     {
       name: 'list_embeds',
-      description: '列出空间已注册的嵌入体语法（可在文档中使用 :::name ... :::）',
+      description:
+        '列出空间已注册的嵌入体语法与示例（内置 html / highlight / table / mermaid / echarts，外加该空间自定义的）。写文档前先调一次，照示例排版',
       inputSchema: { type: 'object', properties: { space: SPACE_PROP }, additionalProperties: false },
       handler: async (args) => {
         const runtime = resolveSpace(args.space);
         return {
           space: runtime.info.id,
+          hint: '用这些嵌入体组织内容，不要把所有内容堆成纯段落。完整排版约定见 style_guide 工具。',
           embeds: runtime.renderer.registry.list().map((definition) => ({
             syntax: `:::${definition.name} ... :::`,
             name: definition.name,
             aliases: definition.aliases ?? [],
             description: definition.description ?? '',
+            example: definition.example ?? null,
           })),
         };
       },
+    },
+    {
+      name: 'style_guide',
+      description:
+        'xdoc 文档排版指南：内置嵌入体（提示块、表格、mermaid、echarts）的语法、示例与写作约定。写或改文档前先读，让产出的文档排版规范、可读性好',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      handler: async () => STYLE_GUIDE,
     },
     {
       name: 'render_markdown',
@@ -346,11 +438,21 @@ function buildTools(manager: SpaceManager, persistRegistry: () => void): ToolDef
 }
 
 export interface McpSessionOptions {
-  roots: string[];
+  /** 数据根目录，空间位于 <root>/spaces 下 */
+  root: string;
   /** 响应输出（默认 stdout） */
   write?: (line: string) => void;
   /** 日志输出（默认 stderr） */
   log?: (message: string) => void;
+  /**
+   * 复用已有的空间运行时（HTTP 模式传入服务端的 manager）。
+   * 不传则自建一个只读文件系统、不监听变更的 manager。
+   * 同一个进程里连同一份根目录开两个 manager 会让两边看到的空间列表分叉，
+   * 所以能在服务端里挂的场合一律复用。
+   */
+  manager?: SpaceManager;
+  /** 配合 manager 一起复用：写入空间索引的函数 */
+  persistIndex?: () => void;
 }
 
 export interface McpSession {
@@ -363,10 +465,13 @@ export async function createMcpSession(options: McpSessionOptions): Promise<McpS
   const write = options.write ?? ((line: string) => process.stdout.write(`${line}\n`));
   const log = options.log ?? ((message: string) => console.error(`[xdoc-mcp] ${message}`));
 
-  const manager = new SpaceManager(() => {}, { watch: false });
-  await bootstrapSpaces(manager, options.roots, log);
-  const persistRegistry = () => savePersistedSpaces(manager.entries());
-  const tools = buildTools(manager, persistRegistry);
+  const root = path.resolve(options.root);
+  const ownManager = !options.manager;
+  const manager = options.manager ?? new SpaceManager(root, () => {}, { watch: false });
+  if (ownManager) await bootstrapSpaces(manager, root, log);
+  const persistIndex =
+    options.persistIndex ?? (() => saveIndex(root, { ...loadIndex(root), order: manager.order() }));
+  const tools = buildTools(manager, persistIndex);
   const toolsByName = new Map(tools.map((tool) => [tool.name, tool]));
 
   const handle = async (message: JsonObject): Promise<unknown | null> => {
@@ -385,8 +490,12 @@ export async function createMcpSession(options: McpSessionOptions): Promise<McpS
             typeof parameters.protocolVersion === 'string' ? parameters.protocolVersion : PROTOCOL_VERSION,
           capabilities: { tools: {} },
           serverInfo: SERVER_INFO,
-          instructions:
-            'xdoc MCP：可读写 markdown 文档与空间。常用工具：list_spaces、list_docs、read_doc、write_doc、edit_doc、search_docs。',
+          instructions: `xdoc MCP：可读写 markdown 文档与空间。
+常用工具：list_spaces、list_docs、read_doc、write_doc、edit_doc、search_docs、list_embeds、style_guide、render_markdown。
+
+写或改文档时请使用 xdoc 的嵌入体语法排版，不要只写纯段落。下面是完整排版指南（也可随时调 style_guide 工具取回）：
+
+${STYLE_GUIDE}`,
         });
       case 'ping':
         return ok(id, {});
@@ -446,19 +555,20 @@ export async function createMcpSession(options: McpSessionOptions): Promise<McpS
     handle,
     close: async () => {
       await queue.catch(() => undefined);
-      await manager.closeAll();
+      // 复用的 manager 归服务端所有，由服务端关闭
+      if (ownManager) await manager.closeAll();
     },
   };
 }
 
 /** stdio 模式：把 stdin 的换行分隔 JSON-RPC 消息接入会话 */
-export async function runMcpStdio(options: { roots: string[] }): Promise<void> {
+export async function runMcpStdio(options: { root: string }): Promise<void> {
   // MCP 的 stdout 只允许 JSON-RPC，日志一律走 stderr
   console.log = (...args: unknown[]) => console.error(...args);
   console.warn = (...args: unknown[]) => console.error(...args);
 
-  const session = await createMcpSession({ roots: options.roots });
-  console.error(`[xdoc-mcp] 已启动，stdio 模式，空间数：${options.roots.length}`);
+  const session = await createMcpSession({ root: options.root });
+  console.error(`[xdoc-mcp] 已启动，stdio 模式，数据根目录：${options.root}`);
 
   const reader = createInterface({ input: process.stdin, crlfDelay: Infinity });
   reader.on('line', (line) => {

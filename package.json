@@ -11,10 +11,13 @@
     "public"
   ],
   "scripts": {
+    "prepare": "node scripts/build.mjs",
     "build": "node scripts/build.mjs",
     "build:watch": "node scripts/build.mjs --watch",
-    "dev": "node scripts/build.mjs && tsx src/cli.ts examples",
+    "dev": "node scripts/build.mjs && tsx src/cli.ts",
     "start": "node dist/cli.js",
+    "service": "bash scripts/xdoc.sh",
+    "init": "bash scripts/init.sh",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test test/*.test.ts"
   },
@@ -30,9 +33,11 @@
   "license": "MIT",
   "dependencies": {
     "chokidar": "^4.0.3",
+    "echarts": "^6.1.0",
     "esbuild": "^0.25.0",
     "highlight.js": "^11.11.1",
-    "markdown-it": "^14.1.0"
+    "markdown-it": "^14.1.0",
+    "mermaid": "^12.1.0"
   },
   "devDependencies": {
     "@types/markdown-it": "^14.1.2",

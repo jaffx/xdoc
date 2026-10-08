@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+#
+# clone 下来一条命令就能用：
+#
+#   ./xdoc                 启动本地文档站点
+#   ./xdoc --token <令牌>  带访问令牌启动（部署到服务器时用）
+#   ./xdoc mcp             启动 MCP stdio 服务（供本机 Agent 调用）
+#
+# 缺依赖就装、缺产物就构建，参数原样转给 CLI。想长期挂在服务器上
+# 用 scripts/xdoc.sh（后台运行 + 日志 + 健康检查）。
+
+set -euo pipefail
+
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CLI="$REPO_DIR/dist/cli.js"
+
+NODE="$(command -v node || true)"
+if [ -z "$NODE" ]; then
+  echo "找不到 node，请先安装 Node.js（>= 18.17）" >&2
+  exit 1
+fi
+
+if [ ! -d "$REPO_DIR/node_modules" ]; then
+  echo "[xdoc] 首次运行，先安装依赖…" >&2
+  # npm install 结束时会自动触发 package.json 里的 prepare（即构建），
+  # 因此下面那次构建通常已经是多余的，只是兜底
+  (cd "$REPO_DIR" && npm install --no-audit --no-fund)
+fi
+
+if [ ! -f "$CLI" ]; then
+  echo "[xdoc] 构建中…" >&2
+  (cd "$REPO_DIR" && "$NODE" scripts/build.mjs)
+elif [ -n "$(find "$REPO_DIR/src" -newer "$CLI" -name '*.ts' -print -quit 2>/dev/null)" ]; then
+  echo "[xdoc] 提示：src/ 下有比 dist/ 更新的文件，改动可能未生效；需要时执行 npm run build" >&2
+fi
+
+exec "$NODE" "$CLI" "$@"

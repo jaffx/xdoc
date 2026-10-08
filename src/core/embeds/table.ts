@@ -2,18 +2,37 @@ import type { EmbedDefinition } from '../types';
 
 const MODIFIERS = ['zebra', 'bordered', 'compact'];
 
-/** :::table title="..." zebra —— 带标题/样式的 markdown 表格 */
+/** 内容以表格类标签开头时按原始 HTML 处理 */
+const HTML_RE = /^<(table|thead|tbody|tfoot|tr|caption|colgroup)\b/i;
+/** 片段（<tr> / <thead> 等）需要补一层 <table> */
+const FRAGMENT_RE = /^<(thead|tbody|tfoot|tr|caption|colgroup)\b/i;
+
+/**
+ * :::table title="..." zebra —— 表格容器
+ *
+ * 内容写原始 HTML 时不做 markdown 解析，因此可以用 colspan / rowspan
+ * 合并单元格；仍然兼容 markdown 表格写法（`| a | b |`）。
+ */
 export const tableEmbed: EmbedDefinition = {
   name: 'table',
-  description: 'markdown 表格容器，支持 title 与 zebra / bordered / compact 样式',
-  example: ':::table title="参数说明" zebra\n| 字段 | 类型 |\n| --- | --- |\n| id | string |\n:::',
+  description: '表格容器，内容写原始 HTML 可用 colspan/rowspan 合并单元格，也兼容 markdown 表格',
+  example:
+    ':::table title="合并单元格" bordered\n<tr><th>区域</th><th colspan="2">销量</th></tr>\n<tr><td rowspan="2">华东</td><td>上海</td><td>120</td></tr>\n<tr><td>杭州</td><td>88</td></tr>\n:::',
   render: (ctx) => {
     const flags = MODIFIERS.filter((name) => ctx.attrs[name] !== undefined || ctx.positional.includes(name));
     const caption =
       ctx.attrs.title ?? ctx.attrs.caption ?? ctx.positional.filter((part) => !MODIFIERS.includes(part)).join(' ');
     const classes = ['xdoc-table', ...flags.map((flag) => `is-${flag}`)].join(' ');
     const captionHtml = caption ? `<figcaption>${ctx.escapeHtml(caption)}</figcaption>` : '';
-    const body = ctx.render(ctx.content).trim();
-    return `${`<figure class="${classes}">`}${captionHtml}<div class="xdoc-table__scroll">${body}</div></figure>\n`;
+
+    const source = ctx.content.trim();
+    let body: string;
+    if (HTML_RE.test(source)) {
+      body = FRAGMENT_RE.test(source) ? `<table>${source}</table>` : source;
+    } else {
+      body = ctx.render(source).trim();
+    }
+
+    return `<figure class="${classes}">${captionHtml}<div class="xdoc-table__scroll">${body}</div></figure>\n`;
   },
 };

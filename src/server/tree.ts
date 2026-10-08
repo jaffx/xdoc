@@ -8,7 +8,7 @@ export interface TreeNode {
   children?: TreeNode[];
 }
 
-const SKIP_DIRS = new Set(['node_modules', 'dist', 'build', 'coverage', '.git', '.idea', '.vscode', '.obsidian']);
+export const SKIP_DIRS = new Set(['node_modules', 'dist', 'build', 'coverage', '.git', '.idea', '.vscode', '.obsidian']);
 const MD_EXTENSIONS = new Set(['.md', '.markdown']);
 
 export async function scanTree(root: string, rel = ''): Promise<TreeNode[]> {

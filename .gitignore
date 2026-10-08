@@ -2,3 +2,13 @@ node_modules
 dist
 .DS_Store
 *.log
+
+# scripts/xdoc.sh 的运行时目录（PID 与日志）
+/.run
+
+# 数据根目录的内容不随仓库提交（有人把 XDOC_ROOT 指到仓库里时兜底）
+/index.json
+/spaces
+/trash
+# 里面有访问令牌与证书路径，绝不能提交
+/config.json

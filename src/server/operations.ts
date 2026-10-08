@@ -1,5 +1,5 @@
 import { existsSync, statSync } from 'node:fs';
-import { mkdir, readFile, readdir, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { listDocPaths } from './tree';
@@ -213,14 +213,3 @@ export async function readDoc(root: string, rel: string): Promise<{ path: string
   return { path: path.relative(root, absolute).split(path.sep).join('/'), content };
 }
 
-/** 新建空间目录并生成 index.md 脚手架 */
-export async function scaffoldSpaceDir(root: string, name?: string): Promise<void> {
-  await mkdir(root, { recursive: true });
-  const entries = await readdir(root);
-  if (entries.some((entry) => /\.(md|markdown)$/i.test(entry))) return;
-  const title = name ?? path.basename(root);
-  await writeFile(
-    path.join(root, 'index.md'),
-    `# ${title}\n\n这是新建的空间根目录，把 markdown 文档放进来即可浏览。\n\n:::tip\n每个空间拥有独立的目录树与 \`xdoc.config.ts\` 扩展配置。\n:::\n`,
-  );
-}

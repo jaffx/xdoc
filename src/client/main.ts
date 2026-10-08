@@ -1,5 +1,6 @@
 import {
   addSpace,
+  AuthError,
   createDoc,
   createFolder,
   deleteEntry,
@@ -10,11 +11,15 @@ import {
   fetchTree,
   removeSpace,
   renameEntry,
+  setToken,
   updateSpace,
+  verifyToken,
+  withToken,
   type DocPayload,
   type SpaceInfo,
   type TreeNode,
 } from './api';
+import { renderDiagrams } from './diagram';
 
 const $ = <T extends Element = HTMLElement>(selector: string) => document.querySelector(selector) as T;
 
@@ -25,6 +30,7 @@ const els = {
   search: $('#search') as HTMLInputElement,
   crumb: $('#crumb'),
   status: $('#status'),
+  exportBtn: $('#export-btn') as HTMLButtonElement,
   scroller: $('#scroller'),
   toast: $('#toast'),
   themeToggle: $('#theme-toggle'),
@@ -33,33 +39,64 @@ const els = {
   sidebar: $('#sidebar'),
   customStyles: $('#custom-styles'),
   embedCount: $('#embed-count'),
-  spaceRoot: $('#space-root'),
   spaceSwitch: $('#space-switch'),
   spaceBtn: $('#space-btn'),
   spaceBtnName: $('#space-btn-name'),
   spaceMenu: $('#space-menu'),
   spaceList: $('#space-list'),
-  spacePath: $('#space-path') as HTMLInputElement,
-  spaceAdd: $('#space-add'),
   spaceCreateToggle: $('#space-create-toggle'),
   spaceEdit: $('#space-edit') as HTMLFormElement,
   spaceEditName: $('#space-edit-name') as HTMLInputElement,
   spaceEditDesc: $('#space-edit-desc') as HTMLTextAreaElement,
   spaceEditCancel: $('#space-edit-cancel'),
   spaceCreate: $('#space-create') as HTMLFormElement,
-  spaceCreateParent: $('#space-create-parent') as HTMLInputElement,
   spaceCreateName: $('#space-create-name') as HTMLInputElement,
   spaceCreateDesc: $('#space-create-desc') as HTMLTextAreaElement,
   spaceCreateCancel: $('#space-create-cancel'),
   newFile: $('#new-file'),
   newFolder: $('#new-folder'),
+  gate: $('#gate'),
+  gateForm: $('#gate-form') as HTMLFormElement,
+  gateInput: $('#gate-input') as HTMLInputElement,
+  gateError: $('#gate-error'),
+  gateSubmit: $('#gate-submit') as HTMLButtonElement,
 };
 
 const SPACE_KEY = 'xdoc:space';
 const LAST_DOC_KEY = 'xdoc:lastDocs';
+const SIDEBAR_KEY = 'xdoc:sidebar';
+const TOC_KEY = 'xdoc:toc';
+
+const TOC_CARET_SVG =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
 
 const CARET_SVG =
   '<svg class="tree__caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>';
+const FOLDER_SVG =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>';
+const FOLDER_OPEN_SVG =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg>';
+const FILE_SVG =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>';
+
+/** 顶部面包屑：按层级拆段，末段高亮，整体路径放进 title 供截断时查看 */
+function setCrumb(parts: string[]) {
+  const segments = parts.filter((part) => part && part !== '/');
+  els.crumb.innerHTML = '';
+  els.crumb.title = segments.join(' / ');
+  segments.forEach((part, index) => {
+    if (index > 0) {
+      const sep = document.createElement('span');
+      sep.className = 'crumb__sep';
+      sep.textContent = '/';
+      els.crumb.append(sep);
+    }
+    const segment = document.createElement('span');
+    segment.className = `crumb__seg${index === segments.length - 1 ? ' is-current' : ''}`;
+    segment.textContent = part;
+    els.crumb.append(segment);
+  });
+}
 const ANCHOR_SVG =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg>';
 const COPY_SVG =
@@ -82,6 +119,7 @@ let tree: TreeNode[] = [];
 const treeCache = new Map<string, TreeNode[]>();
 let current: string | null = null;
 let tocObserver: IntersectionObserver | null = null;
+let tocToggle: HTMLButtonElement | null = null;
 let editingSpaceId: string | null = null;
 
 // ---------- 工具 ----------
@@ -159,7 +197,32 @@ function initTheme() {
     const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
     document.documentElement.dataset.theme = next;
     localStorage.setItem('xdoc-theme', next);
+    // 图表主题在渲染时固定，切主题后按新主题重绘
+    renderDiagrams(els.content);
   });
+}
+
+// ---------- 面板收起 ----------
+
+/** 与 styles.css 的响应式断点保持一致：窄屏侧栏是遮罩抽屉，宽屏才是可折叠的一栏 */
+const MOBILE_QUERY = '(max-width: 900px)';
+
+function initSidebar() {
+  const collapsed = localStorage.getItem(SIDEBAR_KEY) === 'collapsed';
+  document.body.classList.toggle('is-sidebar-collapsed', collapsed);
+  els.menuToggle.setAttribute('aria-expanded', String(!collapsed));
+
+  els.menuToggle.addEventListener('click', () => {
+    if (window.matchMedia(MOBILE_QUERY).matches) {
+      if (els.sidebar.classList.contains('is-open')) closeSidebar();
+      else openSidebar();
+      return;
+    }
+    const next = document.body.classList.toggle('is-sidebar-collapsed');
+    localStorage.setItem(SIDEBAR_KEY, next ? 'collapsed' : 'expanded');
+    els.menuToggle.setAttribute('aria-expanded', String(!next));
+  });
+  els.backdrop.addEventListener('click', closeSidebar);
 }
 
 // ---------- 提示 ----------
@@ -178,7 +241,6 @@ function toast(message: string, kind: 'info' | 'error' = 'info') {
 function renderSpaces() {
   const active = spaces.find((space) => space.id === spaceId);
   els.spaceBtnName.textContent = active?.name ?? '选择空间';
-  els.spaceRoot.textContent = active?.root ?? '';
 
   els.spaceList.innerHTML = '';
   for (const space of spaces) {
@@ -188,9 +250,8 @@ function renderSpaces() {
     const main = document.createElement('button');
     main.type = 'button';
     main.className = 'space-item__main';
-    const subtitle = space.description ?? space.root;
-    main.title = `${space.name}\n${space.root}${space.description ? `\n${space.description}` : ''}`;
-    main.innerHTML = `<span class="space-item__name">${escapeHtml(space.name)}</span><span class="space-item__sub${space.description ? ' is-desc' : ''}">${escapeHtml(subtitle)}</span>`;
+    main.title = space.description ? `${space.name}\n${space.description}` : space.name;
+    main.innerHTML = `<span class="space-item__name">${escapeHtml(space.name)}</span>${space.description ? `<span class="space-item__sub is-desc">${escapeHtml(space.description)}</span>` : ''}`;
     main.addEventListener('click', () => {
       closeSpaceMenu();
       if (space.id !== spaceId) location.hash = docHash(space.id, null);
@@ -227,24 +288,13 @@ function renderSpaces() {
             await route();
           }
         } catch (error) {
-          toast(error instanceof Error ? error.message : String(error), 'error');
+          reportError(error);
         }
       });
       row.append(remove);
     }
     els.spaceList.append(row);
   }
-}
-
-function parentDir(target: string): string {
-  const index = Math.max(target.lastIndexOf('/'), target.lastIndexOf('\\'));
-  if (index <= 0) return '/';
-  return target.slice(0, index);
-}
-
-function joinPath(parent: string, name: string): string {
-  const base = parent.replace(/[\\/]+$/, '');
-  return base ? `${base}/${name}` : name;
 }
 
 function openEditForm(space: SpaceInfo) {
@@ -265,8 +315,6 @@ function closeEditForm() {
 function openCreateForm() {
   closeEditForm();
   els.spaceCreate.hidden = false;
-  const active = spaces.find((space) => space.id === spaceId);
-  els.spaceCreateParent.value = active ? parentDir(active.root) : '';
   els.spaceCreateName.value = '';
   els.spaceCreateDesc.value = '';
   els.spaceCreateName.focus();
@@ -285,40 +333,37 @@ async function submitEditForm() {
     });
     closeEditForm();
     await reloadSpaces();
-    if (updated.id === spaceId && current) els.crumb.textContent = `${updated.name} / ${current}`;
+    if (updated.id === spaceId && current) setCrumb([updated.name, ...current.split('/')]);
     toast(`已更新空间「${updated.name}」`);
   } catch (error) {
-    toast(error instanceof Error ? error.message : String(error), 'error');
+    reportError(error);
   }
 }
 
 async function submitCreateForm() {
-  const parent = els.spaceCreateParent.value.trim();
   const name = els.spaceCreateName.value.trim();
-  if (!parent || !name) {
-    toast('请填写位置与名称', 'error');
+  if (!name) {
+    toast('请填写空间名称', 'error');
     return;
   }
   try {
     const { space, created } = await addSpace({
-      path: joinPath(parent, name),
       name,
       description: els.spaceCreateDesc.value.trim() || undefined,
-      create: true,
     });
     closeSpaceMenu();
     await reloadSpaces();
     if (space.id !== spaceId) location.hash = docHash(space.id, null);
     toast(created ? `已创建空间「${space.name}」` : `空间已存在：${space.name}`);
   } catch (error) {
-    toast(error instanceof Error ? error.message : String(error), 'error');
+    reportError(error);
   }
 }
 
 function openSpaceMenu() {
   els.spaceMenu.hidden = false;
   els.spaceBtn.setAttribute('aria-expanded', 'true');
-  els.spacePath.focus();
+  els.spaceCreateToggle.focus();
 }
 
 function closeSpaceMenu() {
@@ -326,24 +371,6 @@ function closeSpaceMenu() {
   els.spaceBtn.setAttribute('aria-expanded', 'false');
   closeEditForm();
   closeCreateForm();
-}
-
-async function submitAddSpace() {
-  const value = els.spacePath.value.trim();
-  if (!value) return;
-  els.spaceAdd.setAttribute('disabled', 'true');
-  try {
-    const { space, created } = await addSpace({ path: value });
-    els.spacePath.value = '';
-    closeSpaceMenu();
-    await reloadSpaces();
-    if (space.id !== spaceId) location.hash = docHash(space.id, null);
-    toast(created ? `已添加空间「${space.name}」` : `空间已存在：${space.name}`);
-  } catch (error) {
-    toast(error instanceof Error ? error.message : String(error), 'error');
-  } finally {
-    els.spaceAdd.removeAttribute('disabled');
-  }
 }
 
 async function reloadSpaces() {
@@ -377,7 +404,7 @@ function buildNode(node: TreeNode): HTMLElement {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'tree__dir-btn';
-    button.innerHTML = `${CARET_SVG}<span>${escapeHtml(node.name)}</span>`;
+    button.innerHTML = `${CARET_SVG}<span class="tree__icon tree__icon--folder">${FOLDER_SVG}</span><span class="tree__icon tree__icon--folder-open">${FOLDER_OPEN_SVG}</span><span class="tree__label">${escapeHtml(node.name)}</span>`;
     button.addEventListener('click', () => item.classList.toggle('is-collapsed'));
     row.append(button, buildActions(node));
     const children = buildList(node.children ?? []);
@@ -388,7 +415,9 @@ function buildNode(node: TreeNode): HTMLElement {
     const link = document.createElement('a');
     link.href = docHash(spaceId ?? '', node.path);
     const label = node.name.replace(/\.(md|markdown)$/i, '');
-    link.innerHTML = `<span>${escapeHtml(label)}</span>`;
+    // 标签原文存在 dataset 上，搜索时按它做高亮（hint：filterTree）
+    item.dataset.label = label;
+    link.innerHTML = `<span class="tree__icon tree__icon--file">${FILE_SVG}</span><span class="tree__label">${escapeHtml(label)}</span>`;
     row.append(link, buildActions(node));
     item.append(row);
   }
@@ -521,7 +550,7 @@ function beginCreate(parentPath: string | null, kind: 'file' | 'folder') {
         }
         return true;
       } catch (error) {
-        toast(error instanceof Error ? error.message : String(error), 'error');
+        reportError(error);
         return false;
       }
     },
@@ -576,7 +605,7 @@ function beginRename(node: TreeNode) {
           current = `${path}${current.slice(node.path.length)}`;
           saveLastDoc(spaceId, current);
           syncHash();
-          els.crumb.textContent = `${spaceName(spaceId)} / ${current}`;
+          setCrumb([spaceName(spaceId), ...current.split('/')]);
         }
       }
       pendingInput = null;
@@ -586,7 +615,7 @@ function beginRename(node: TreeNode) {
       busy = false;
       input.disabled = false;
       input.focus();
-      toast(error instanceof Error ? error.message : String(error), 'error');
+      reportError(error);
     }
   };
   input.addEventListener('keydown', (event) => {
@@ -620,7 +649,7 @@ async function deleteNode(node: TreeNode) {
     if (affected) await route();
     toast('已删除');
   } catch (error) {
-    toast(error instanceof Error ? error.message : String(error), 'error');
+    reportError(error);
   }
 }
 
@@ -644,7 +673,7 @@ function markActive() {
   for (const link of els.tree.querySelectorAll<HTMLAnchorElement>('.tree__file a')) {
     const item = link.closest<HTMLElement>('.tree__file');
     const active = item?.dataset.path === current;
-    link.classList.toggle('is-active', active);
+    item?.classList.toggle('is-active', active);
     if (active) {
       let parent = item?.parentElement?.closest<HTMLElement>('.tree__dir');
       while (parent) {
@@ -656,11 +685,34 @@ function markActive() {
   }
 }
 
+/** 把标签里命中查询的片段包成 <mark>；query 为空则还原为纯文本 */
+function highlightLabel(file: HTMLElement, query: string) {
+  const labelEl = file.querySelector<HTMLElement>('.tree__label');
+  if (!labelEl) return;
+  const label = file.dataset.label ?? '';
+  const needle = query.toLowerCase();
+  if (!needle) {
+    labelEl.textContent = label;
+    return;
+  }
+  const haystack = label.toLowerCase();
+  let html = '';
+  let from = 0;
+  for (let at = haystack.indexOf(needle); at !== -1; at = haystack.indexOf(needle, from)) {
+    html += escapeHtml(label.slice(from, at));
+    html += `<mark>${escapeHtml(label.slice(at, at + needle.length))}</mark>`;
+    from = at + needle.length;
+  }
+  labelEl.innerHTML = html + escapeHtml(label.slice(from));
+}
+
 function filterTree(query: string) {
-  const q = query.trim().toLowerCase();
+  const raw = query.trim();
+  const q = raw.toLowerCase();
   for (const file of els.tree.querySelectorAll<HTMLElement>('.tree__file')) {
     const matched = q.length === 0 || (file.dataset.path ?? '').toLowerCase().includes(q);
     file.classList.toggle('is-hidden', !matched);
+    highlightLabel(file, matched ? raw : '');
   }
   const dirs = [...els.tree.querySelectorAll<HTMLElement>('.tree__dir')].reverse();
   for (const dir of dirs) {
@@ -709,7 +761,8 @@ function showEmptySpaces() {
   current = null;
   els.tree.innerHTML = '';
   els.content.innerHTML = '<div class="empty"><h1>没有可用空间</h1><p>在下方输入目录路径添加一个空间。</p></div>';
-  els.crumb.textContent = '首页';
+  els.exportBtn.hidden = true;
+  setCrumb(['首页']);
   renderSpaces();
 }
 
@@ -752,7 +805,8 @@ async function route() {
     else {
       current = null;
       els.content.innerHTML = '<div class="empty"><h1>该空间没有 markdown 文件</h1><p>请放入 .md 文件，或在左上角切换到其他空间。</p></div>';
-      els.crumb.textContent = spaceName(spaceId);
+      els.exportBtn.hidden = true;
+      setCrumb([spaceName(spaceId)]);
       syncHash();
     }
   }
@@ -772,7 +826,7 @@ async function openDoc(rel: string): Promise<boolean> {
   current = rel;
   saveLastDoc(id, rel);
   syncHash();
-  els.crumb.textContent = `${spaceName(id)} / ${rel}`;
+  setCrumb([spaceName(id), ...rel.split('/')]);
   els.status.textContent = '加载中…';
   markActive();
   closeSidebar();
@@ -785,8 +839,13 @@ async function openDoc(rel: string): Promise<boolean> {
     return true;
   } catch (error) {
     if (current !== rel || spaceId !== id) return false;
-    els.content.innerHTML = `<div class="empty"><h1>加载失败</h1><p>${escapeHtml(String(error instanceof Error ? error.message : error))}</p></div>`;
     els.status.textContent = '';
+    els.exportBtn.hidden = true;
+    if (error instanceof AuthError) {
+      showGate(error.message);
+      return false;
+    }
+    els.content.innerHTML = `<div class="empty"><h1>加载失败</h1><p>${escapeHtml(String(error instanceof Error ? error.message : error))}</p></div>`;
     return false;
   }
 }
@@ -800,7 +859,7 @@ async function refreshCurrent(keepScroll = true) {
     if (spaceId !== id || current !== rel) return;
     renderDoc(doc, keepScroll);
   } catch (error) {
-    toast(String(error instanceof Error ? error.message : error), 'error');
+    reportError(error);
   }
 }
 
@@ -810,6 +869,7 @@ function renderDoc(doc: DocPayload, keepScroll = false) {
   enhanceContent();
   buildToc();
   els.scroller.scrollTop = keepScroll ? scrollTop : 0;
+  els.exportBtn.hidden = false;
 }
 
 function slugify(text: string, index: number): string {
@@ -864,15 +924,7 @@ function enhanceContent() {
     pre.append(button);
   }
 
-  for (const box of els.content.querySelectorAll<HTMLElement>('[data-xdoc-todo]')) {
-    box.querySelectorAll<HTMLInputElement>('input[type="checkbox"]').forEach((input) => {
-      input.addEventListener('change', () => {
-        input.closest('.xdoc-todo__item')?.classList.toggle('is-done', input.checked);
-        recalcTodo(box);
-      });
-    });
-    recalcTodo(box);
-  }
+  renderDiagrams(els.content);
 
   for (const table of els.content.querySelectorAll('table')) {
     if (table.parentElement?.classList.contains('xdoc-table__scroll')) continue;
@@ -908,28 +960,44 @@ function enhanceContent() {
   for (const image of els.content.querySelectorAll<HTMLImageElement>('img[src]')) {
     const src = image.getAttribute('src') ?? '';
     if (/^(https?:)?\/\//i.test(src) || src.startsWith('data:') || src.startsWith('/api/') || !current || !spaceId) continue;
-    image.src = `/api/asset?space=${encodeURIComponent(spaceId)}&path=${encodeURIComponent(resolveRelative(current, src))}`;
+    // 图片是 <img> 发的请求，带不了请求头，令牌只能走查询串
+    image.src = withToken(
+      `/api/asset?space=${encodeURIComponent(spaceId)}&path=${encodeURIComponent(resolveRelative(current, src))}`,
+    );
   }
-}
-
-function recalcTodo(box: HTMLElement) {
-  const inputs = [...box.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')];
-  const done = inputs.filter((input) => input.checked).length;
-  const total = inputs.length;
-  const percent = total === 0 ? 0 : Math.round((done / total) * 100);
-  box.dataset.done = String(done);
-  box.dataset.total = String(total);
-  const bar = box.querySelector<HTMLElement>('.xdoc-todo__bar i');
-  if (bar) bar.style.width = `${percent}%`;
-  const count = box.querySelector<HTMLElement>('.xdoc-todo__count');
-  if (count) count.textContent = `${done}/${total}`;
 }
 
 // ---------- 目录 (TOC) ----------
 
+/** 标题行右侧的收起按钮。收起只藏列表，标题留着，随时能再展开 */
+function buildTocHead(): HTMLElement {
+  const head = document.createElement('div');
+  head.className = 'toc__head';
+  const title = document.createElement('div');
+  title.className = 'toc__title';
+  title.textContent = '本文目录';
+  tocToggle = document.createElement('button');
+  tocToggle.type = 'button';
+  tocToggle.className = 'toc__toggle';
+  tocToggle.innerHTML = TOC_CARET_SVG;
+  tocToggle.addEventListener('click', () => setTocCollapsed(!els.toc.classList.contains('is-collapsed')));
+  head.append(title, tocToggle);
+  return head;
+}
+
+function setTocCollapsed(collapsed: boolean) {
+  els.toc.classList.toggle('is-collapsed', collapsed);
+  localStorage.setItem(TOC_KEY, collapsed ? 'collapsed' : 'expanded');
+  if (!tocToggle) return;
+  tocToggle.title = collapsed ? '展开目录' : '收起目录';
+  tocToggle.setAttribute('aria-label', tocToggle.title);
+  tocToggle.setAttribute('aria-expanded', String(!collapsed));
+}
+
 function buildToc() {
   tocObserver?.disconnect();
   tocObserver = null;
+  tocToggle = null;
   els.toc.innerHTML = '';
   const headings = [...els.content.querySelectorAll<HTMLElement>('h2, h3')];
   if (headings.length < 2) {
@@ -954,7 +1022,8 @@ function buildToc() {
     item.append(link);
     list.append(item);
   }
-  els.toc.append(list);
+  els.toc.append(buildTocHead(), list);
+  setTocCollapsed(localStorage.getItem(TOC_KEY) === 'collapsed');
 
   tocObserver = new IntersectionObserver(
     (entries) => {
@@ -968,6 +1037,192 @@ function buildToc() {
     { root: els.scroller, rootMargin: '0px 0px -70% 0px', threshold: 0 },
   );
   for (const heading of headings) tocObserver.observe(heading);
+}
+
+// ---------- 导出为独立 HTML ----------
+
+/**
+ * 导出靠的是「把浏览器已经渲染好的 DOM 序列化下来」：mermaid 此时已是内联 SVG，
+ * 图片走一遍 base64，CSS 取当前全局样式加空间自定义样式。
+ * 因此导出结果不依赖任何脚本，也不需要服务端再渲染一次。
+ */
+
+/** 当前生效主题。没手动切过时 data-theme 是空的，要按系统偏好定死一个值，导出才是确定的 */
+function effectiveTheme(): 'light' | 'dark' {
+  const explicit = document.documentElement.dataset.theme;
+  if (explicit === 'dark' || explicit === 'light') return explicit;
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error ?? new Error('读取图片失败'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+/** 把指向服务的图片抓下来内联，导出的文件才能离线看 */
+async function inlineImages(root: HTMLElement) {
+  const images = [...root.querySelectorAll<HTMLImageElement>('img[src]')];
+  await Promise.all(
+    images.map(async (image) => {
+      const src = image.getAttribute('src') ?? '';
+      if (!src.startsWith('/api/asset')) return;
+      try {
+        const response = await fetch(src);
+        if (!response.ok) throw new Error(String(response.status));
+        image.src = await blobToDataUrl(await response.blob());
+      } catch {
+        // 取不到就留个空图，总比让导出整个失败好
+        image.removeAttribute('src');
+      }
+    }),
+  );
+}
+
+/**
+ * echarts 画在 canvas 上，克隆出来的 canvas 是空白的。
+ * 按文档顺序把克隆里的 canvas 换成原 DOM 对应 canvas 的位图。
+ */
+function rasterizeCharts(live: HTMLElement, clone: HTMLElement) {
+  const liveCanvases = [...live.querySelectorAll<HTMLCanvasElement>('.xdoc-echarts__view canvas')];
+  clone.querySelectorAll('canvas').forEach((canvas, index) => {
+    const source = liveCanvases[index];
+    if (!source) {
+      canvas.remove();
+      return;
+    }
+    const image = document.createElement('img');
+    image.src = source.toDataURL('image/png');
+    canvas.replaceWith(image);
+  });
+}
+
+/** 去掉只在应用里才有意义的交互元素与运行时标记 */
+function stripInteractive(root: HTMLElement) {
+  root.querySelectorAll('.copy-btn').forEach((node) => node.remove());
+  root.querySelectorAll('pre.has-copy').forEach((node) => node.classList.remove('has-copy'));
+  root.querySelectorAll<HTMLElement>('[data-xdoc-mermaid], [data-xdoc-echarts]').forEach((figure) => {
+    const source = figure.querySelector<HTMLElement>('.xdoc-diagram__src');
+    // 已渲染出图就不需要原始源码了；还没渲染完（刚打开就点导出）则把源码露出来，
+    // 总比留一个空白框好
+    if (figure.querySelector('svg, img, canvas')) {
+      source?.remove();
+    } else {
+      source?.removeAttribute('hidden');
+      figure.querySelector('.xdoc-mermaid__view, .xdoc-echarts__view')?.remove();
+    }
+    figure.removeAttribute('data-xdoc-mermaid');
+    figure.removeAttribute('data-xdoc-echarts');
+    figure.removeAttribute('data-rendered');
+  });
+  // 标题锚点在应用里指向站内路由，导出后改成页内锚点
+  root.querySelectorAll<HTMLAnchorElement>('.heading-anchor').forEach((anchor) => {
+    const heading = anchor.closest('h1, h2, h3, h4');
+    if (heading?.id) anchor.href = `#${heading.id}`;
+    else anchor.remove();
+  });
+}
+
+/**
+ * 导出文件里的「本文目录」。应用里的 #toc 是独立面板、不随正文克隆，
+ * 这里直接照正文标题另生成一份纯锚点列表——离线文件里没有脚本，
+ * 收起/展开交给 <details>，所以不需要 JS。
+ */
+function insertExportToc(clone: HTMLElement) {
+  const headings = [...clone.querySelectorAll<HTMLElement>('h2, h3')].filter((heading) => heading.id);
+  // 与应用里的取舍一致：标题太少就不值得放目录
+  if (headings.length < 2) return;
+  const items = headings
+    .map((heading) => {
+      const sub = heading.tagName === 'H3' ? ' toc__item--sub' : '';
+      const label = escapeHtml((heading.textContent ?? '').trim());
+      return `<li class="toc__item${sub}"><a href="#${heading.id}">${label}</a></li>`;
+    })
+    .join('');
+  const toc = `<details class="xdoc-toc" open><summary class="xdoc-toc__title">本文目录</summary><ul>${items}</ul></details>`;
+  // 放在文档大标题之后：目录排在自己的标题前面很别扭；没有大标题就直接放最前面
+  const lead = clone.querySelector('h1');
+  if (lead) lead.insertAdjacentHTML('afterend', toc);
+  else clone.insertAdjacentHTML('afterbegin', toc);
+}
+
+function exportFileName(): string {
+  const base = (current ?? 'document').split('/').pop() ?? 'document';
+  const stem = base.replace(/\.(md|markdown)$/i, '') || 'document';
+  return `${stem}.html`;
+}
+
+function buildExportDocument(contentHtml: string, css: string): string {
+  const title = document.title.replace(/\s*·\s*xdoc$/, '') || 'xdoc';
+  const layout = [
+    // 复用应用自己的排版类，只把「可滚动面板」的约束放开，让它变成普通文档流
+    'html, body { height: auto; }',
+    '.content-wrap { display: block; overflow: visible; padding: 0 24px; }',
+    '.content { margin: 0 auto; padding: 48px 0 96px; }',
+    // 导出文件里的目录。列表项复用 .toc__item 的样式，这里只补容器与 <details> 的壳
+    '.xdoc-toc { margin: 0 0 2.2em; padding: 14px 18px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-soft); font-size: 13px; }',
+    '.xdoc-toc__title { cursor: pointer; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-mute); }',
+    '.xdoc-toc__title:hover { color: var(--accent); }',
+    '.xdoc-toc[open] .xdoc-toc__title { margin-bottom: 10px; }',
+    '.xdoc-toc ul { list-style: none; margin: 0; padding: 0; border-left: 1px solid var(--border); }',
+  ].join('\n');
+  return `<!DOCTYPE html>
+<html lang="zh-CN" data-theme="${effectiveTheme()}">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${escapeHtml(title)}</title>
+<style>
+${css}
+${layout}
+</style>
+</head>
+<body>
+<div class="content-wrap">
+<article class="content markdown-body">
+${contentHtml}
+</article>
+</div>
+</body>
+</html>
+`;
+}
+
+async function exportDoc() {
+  if (!spaceId || !current) return;
+  els.exportBtn.disabled = true;
+  els.status.textContent = '导出中…';
+  try {
+    const clone = els.content.cloneNode(true) as HTMLElement;
+    rasterizeCharts(els.content, clone);
+    stripInteractive(clone);
+    insertExportToc(clone);
+    await inlineImages(clone);
+
+    const [globalCss, customCss] = await Promise.all([
+      fetch('/styles.css').then((response) => response.text()),
+      fetch(withToken(`/api/styles?space=${encodeURIComponent(spaceId)}`)).then((response) => response.text()),
+    ]);
+
+    const html = buildExportDocument(clone.innerHTML, `${globalCss}\n${customCss}`);
+    const url = URL.createObjectURL(new Blob([html], { type: 'text/html;charset=utf-8' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = exportFileName();
+    document.body.append(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    toast('已导出 HTML');
+  } catch (error) {
+    toast(`导出失败：${error instanceof Error ? error.message : error}`, 'error');
+  } finally {
+    els.exportBtn.disabled = false;
+    els.status.textContent = '';
+  }
 }
 
 // ---------- 样式与扩展信息 ----------
@@ -999,7 +1254,8 @@ async function loadEmbeds() {
 // ---------- 实时更新 ----------
 
 function connectEvents() {
-  const source = new EventSource('/api/events');
+  // EventSource 也设不了请求头，同样走查询串
+  const source = new EventSource(withToken('/api/events'));
   source.addEventListener('open', () => {
     els.status.textContent = '';
   });
@@ -1050,7 +1306,7 @@ function connectEvents() {
   });
 }
 
-// ---------- 移动端侧栏 ----------
+// ---------- 窄屏侧栏抽屉 ----------
 
 function openSidebar() {
   els.sidebar.classList.add('is-open');
@@ -1062,16 +1318,67 @@ function closeSidebar() {
   els.backdrop.classList.remove('is-visible');
 }
 
+// ---------- 访问令牌 ----------
+
+/**
+ * 从 ?token= 接过令牌并把它从地址栏抹掉。
+ * 部署好之后可以直接把带令牌的链接发给别人；抹掉是为了不让它留在
+ * 浏览历史、书签和 Referer 里。
+ */
+function absorbTokenFromUrl() {
+  const url = new URL(location.href);
+  const token = url.searchParams.get('token');
+  if (!token) return;
+  setToken(token);
+  url.searchParams.delete('token');
+  history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+}
+
+function showGate(message = '') {
+  els.gate.hidden = false;
+  els.gateError.textContent = message;
+  els.gateInput.value = '';
+  els.gateInput.focus();
+}
+
+/** 输令牌 → 先探一次接口确认能用再存下来重载，免得存错了要反复试 */
+async function submitGate() {
+  const token = els.gateInput.value.trim();
+  if (!token) {
+    els.gateError.textContent = '请输入访问令牌';
+    return;
+  }
+  els.gateSubmit.disabled = true;
+  els.gateError.textContent = '验证中…';
+  try {
+    if (await verifyToken(token)) {
+      setToken(token);
+      location.reload();
+      return;
+    }
+    els.gateError.textContent = '令牌不正确';
+  } catch {
+    els.gateError.textContent = '连接失败，请稍后再试';
+  }
+  els.gateSubmit.disabled = false;
+}
+
+/** 统一的错误出口：令牌不对就把浮层顶上来（比如服务端换了令牌），其余照常提示 */
+function reportError(error: unknown) {
+  if (error instanceof AuthError) {
+    showGate(error.message);
+    return;
+  }
+  toast(String(error instanceof Error ? error.message : error), 'error');
+}
+
 // ---------- 启动 ----------
 
 async function boot() {
   initTheme();
+  absorbTokenFromUrl();
 
-  els.menuToggle.addEventListener('click', () => {
-    if (els.sidebar.classList.contains('is-open')) closeSidebar();
-    else openSidebar();
-  });
-  els.backdrop.addEventListener('click', closeSidebar);
+  initSidebar();
   els.search.addEventListener('input', () => filterTree(els.search.value));
   els.search.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') {
@@ -1085,11 +1392,6 @@ async function boot() {
     event.stopPropagation();
     if (els.spaceMenu.hidden) openSpaceMenu();
     else closeSpaceMenu();
-  });
-  els.spaceAdd.addEventListener('click', () => void submitAddSpace());
-  els.spacePath.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') void submitAddSpace();
-    if (event.key === 'Escape') closeSpaceMenu();
   });
   els.spaceEdit.addEventListener('submit', (event) => {
     event.preventDefault();
@@ -1106,6 +1408,12 @@ async function boot() {
   });
   els.spaceCreateCancel.addEventListener('click', closeCreateForm);
 
+  els.gateForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    void submitGate();
+  });
+
+  els.exportBtn.addEventListener('click', () => void exportDoc());
   els.newFile.addEventListener('click', () => beginCreate(null, 'file'));
   els.newFolder.addEventListener('click', () => beginCreate(null, 'folder'));
   document.addEventListener('click', (event) => {
@@ -1124,6 +1432,12 @@ async function boot() {
   try {
     spaces = await fetchSpaces();
   } catch (error) {
+    if (error instanceof AuthError) {
+      // 没有令牌就没必要往下走了：树、正文、事件流全是 401，
+      // 连上事件流只会让浏览器不停重连
+      showGate();
+      return;
+    }
     toast(String(error instanceof Error ? error.message : error), 'error');
   }
   renderSpaces();

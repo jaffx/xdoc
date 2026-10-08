@@ -36,21 +36,53 @@ test('highlight 显式 type 与 title', () => {
   assert.match(html, /小心/);
 });
 
-test('todo 统计完成数量并渲染复选框', () => {
-  const renderer = createRenderer();
-  const html = renderer.render(':::todo title="清单"\n- [x] 完成项\n- [ ] 待办项\n:::');
-  assert.match(html, /data-done="1"/);
-  assert.match(html, /data-total="2"/);
-  assert.match(html, /checked/);
-  assert.match(html, /1\/2/);
-});
-
 test('table 包裹标题与样式', () => {
   const renderer = createRenderer();
   const html = renderer.render(':::table title="参数" zebra\n| a | b |\n| - | - |\n| 1 | 2 |\n:::');
   assert.match(html, /xdoc-table is-zebra/);
   assert.match(html, /<figcaption>参数<\/figcaption>/);
   assert.match(html, /<table>/);
+});
+
+test('table 原始 HTML 内容保留 colspan/rowspan', () => {
+  const renderer = createRenderer();
+  const html = renderer.render(
+    ':::table title="合并" bordered\n<table>\n<tr><th colspan="2">销量</th></tr>\n<tr><td rowspan="2">华东</td><td>120</td></tr>\n</table>\n:::',
+  );
+  assert.match(html, /xdoc-table is-bordered/);
+  assert.match(html, /colspan="2"/);
+  assert.match(html, /rowspan="2"/);
+  // 原始 HTML 不应被 markdown 解析包进 <p>
+  assert.doesNotMatch(html, /<p>&lt;table/);
+});
+
+test('table 表格片段自动补 <table> 包裹', () => {
+  const renderer = createRenderer();
+  const html = renderer.render(':::table\n<tr><td colspan="2">片段</td></tr>\n:::');
+  assert.match(html, /<table><tr><td colspan="2">片段<\/td><\/tr><\/table>/);
+});
+
+test('mermaid 渲染为占位容器并保留源码', () => {
+  const renderer = createRenderer();
+  const html = renderer.render(':::mermaid title="流程"\nflowchart LR\n  A --> B\n:::');
+  assert.match(html, /data-xdoc-mermaid/);
+  assert.match(html, /<figcaption>流程<\/figcaption>/);
+  assert.match(html, /flowchart LR/);
+  assert.match(html, /xdoc-diagram__src/);
+});
+
+test('echarts 渲染容器并支持 height 与转义', () => {
+  const renderer = createRenderer();
+  const html = renderer.render(':::echarts title="访问量" height=320\n{ "series": [{ "type": "bar" }] }\n:::');
+  assert.match(html, /data-xdoc-echarts/);
+  assert.match(html, /height:320px/);
+  assert.match(html, /&quot;type&quot;: &quot;bar&quot;/);
+});
+
+test('echarts 别名 chart 与 mermaid 别名 diagram 可用', () => {
+  const renderer = createRenderer();
+  assert.match(renderer.render(':::chart\n{}\n:::'), /data-xdoc-echarts/);
+  assert.match(renderer.render(':::diagram\ngraph TD\n:::'), /data-xdoc-mermaid/);
 });
 
 test('未注册嵌入体输出提示而非崩溃', () => {

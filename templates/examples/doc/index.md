@@ -9,7 +9,7 @@ xdoc 是一个支持**自定义嵌入体语法**的 Markdown 文档浏览工具�
 
 ## 示例目录
 
-- [内置嵌入体演示](./embeds.md) —— html、高亮块、TODO、表格
+- [内置嵌入体演示](./embeds.md) —— html、高亮块、表格、mermaid、echarts
 - [自定义嵌入体指南](./custom-embed.md) —— 如何注册自己的语法
 
 ## 一个最小的自定义扩展

@@ -1,8 +1,7 @@
+/** 空间信息不含文件系统路径：空间的实际位置由服务端管理 */
 export interface SpaceInfo {
   id: string;
   name: string;
-  root: string;
-  source: 'cli' | 'user';
   description?: string;
   createdAt?: number;
   updatedAt?: number;
@@ -29,8 +28,58 @@ export interface EmbedInfo {
   description: string;
 }
 
+const TOKEN_KEY = 'xdoc:token';
+
+/** 服务端要求令牌但本地没有 / 不对时抛这个，调用方据此弹输入框而不是当普通故障 */
+export class AuthError extends Error {}
+
+export function getToken(): string {
+  try {
+    return localStorage.getItem(TOKEN_KEY) ?? '';
+  } catch {
+    // 隐私模式下 localStorage 不可用，只能每次重输
+    return '';
+  }
+}
+
+export function setToken(token: string): void {
+  try {
+    if (token) localStorage.setItem(TOKEN_KEY, token);
+    else localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    /* 存不下就算了，这一次会话仍可用 */
+  }
+}
+
+function authHeaders(): Record<string, string> {
+  const token = getToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+/**
+ * 把令牌挂到 URL 上。`<img>` 与 `EventSource` 设不了请求头，只能走查询串——
+ * 服务端两种都认。
+ */
+export function withToken(url: string): string {
+  const token = getToken();
+  if (!token) return url;
+  return `${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`;
+}
+
+/** 用指定令牌探一次接口，用于输入令牌后先验证再保存 */
+export async function verifyToken(token: string): Promise<boolean> {
+  const response = await fetch('/api/spaces', {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  return response.ok;
+}
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, init);
+  const response = await fetch(url, {
+    ...init,
+    headers: { ...authHeaders(), ...((init?.headers as Record<string, string>) ?? {}) },
+  });
+  if (response.status === 401) throw new AuthError('需要访问令牌');
   if (!response.ok) {
     let message = `请求失败（${response.status}）`;
     try {
@@ -49,11 +98,9 @@ export function fetchSpaces(): Promise<SpaceInfo[]> {
 }
 
 export interface AddSpacePayload {
-  path: string;
-  name?: string;
+  /** 空间名称；目录名由服务端在数据根目录下派生 */
+  name: string;
   description?: string;
-  /** true 表示目录不存在时直接创建（并生成 index.md） */
-  create?: boolean;
 }
 
 export function addSpace(payload: AddSpacePayload): Promise<{ space: SpaceInfo; created: boolean }> {
@@ -115,7 +162,8 @@ export function fetchDoc(space: string, path: string): Promise<DocPayload> {
 }
 
 export async function fetchStyles(space: string): Promise<string> {
-  const response = await fetch(`/api/styles?space=${encodeURIComponent(space)}`);
+  const response = await fetch(withToken(`/api/styles?space=${encodeURIComponent(space)}`), { headers: authHeaders() });
+  if (response.status === 401) throw new AuthError('需要访问令牌');
   return response.ok ? response.text() : '';
 }
 

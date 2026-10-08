@@ -47,11 +47,8 @@
 
           <form class="space-form" id="space-create" hidden>
             <div class="space-form__title">新建空间</div>
-            <label>位置
-              <input id="space-create-parent" type="text" autocomplete="off" spellcheck="false" placeholder="父目录，支持 ~">
-            </label>
             <label>名称
-              <input id="space-create-name" type="text" autocomplete="off" spellcheck="false" placeholder="文件夹名称">
+              <input id="space-create-name" type="text" autocomplete="off" spellcheck="false" placeholder="例如：产品文档">
             </label>
             <label>备注
               <textarea id="space-create-desc" rows="2" placeholder="可选"></textarea>
@@ -63,12 +60,9 @@
           </form>
 
           <div class="space-menu__add">
-            <input id="space-path" type="text" placeholder="输入已有目录路径，添加空间…" autocomplete="off" spellcheck="false">
-            <button id="space-add" type="button" title="添加已有目录" aria-label="添加已有目录">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-            </button>
-            <button id="space-create-toggle" class="is-secondary" type="button" title="新建空间" aria-label="新建空间">
+            <button id="space-create-toggle" type="button" title="新建空间">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/><path d="M12 11v6M9 14h6"/></svg>
+              <span>新建空间</span>
             </button>
           </div>
         </div>
@@ -88,7 +82,6 @@
       </div>
       <nav class="tree" id="tree" aria-label="文档目录"></nav>
       <div class="sidebar__foot">
-        <span class="sidebar__root" id="space-root"></span>
         <span id="embed-count"></span>
       </div>
     </aside>
@@ -96,11 +89,14 @@
 
     <main class="main">
       <header class="topbar">
-        <button class="icon-btn menu-btn" id="menu-toggle" title="目录" aria-label="切换目录">
+        <button class="icon-btn menu-btn" id="menu-toggle" title="收起 / 展开目录" aria-label="收起或展开目录" aria-controls="sidebar" aria-expanded="true">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         </button>
         <div class="crumb" id="crumb">首页</div>
         <div class="status" id="status" role="status"></div>
+        <button class="icon-btn" id="export-btn" title="导出为 HTML" aria-label="导出为 HTML" hidden>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+        </button>
       </header>
       <div class="content-wrap" id="scroller">
         <article class="content markdown-body" id="content">
@@ -112,6 +108,23 @@
         <nav class="toc is-hidden" id="toc" aria-label="本文目录"></nav>
       </div>
     </main>
+  </div>
+
+  <div class="gate" id="gate" hidden>
+    <form class="gate__box" id="gate-form">
+      <h1 class="gate__title">需要访问令牌</h1>
+      <p class="gate__hint">这台 xdoc 开启了访问令牌，请在下方填入。</p>
+      <input
+        class="gate__input"
+        id="gate-input"
+        type="password"
+        autocomplete="current-password"
+        placeholder="访问令牌"
+        aria-label="访问令牌"
+      />
+      <div class="gate__error" id="gate-error" role="alert"></div>
+      <button class="gate__submit" id="gate-submit" type="submit">进入</button>
+    </form>
   </div>
 
   <div class="toast" id="toast" role="status"></div>
