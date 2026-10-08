@@ -19,7 +19,8 @@
     "service": "bash scripts/xdoc.sh",
     "init": "bash scripts/init.sh",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test test/*.test.ts"
+    "test": "tsx --test test/*.test.ts",
+    "update": "bash scripts/update.sh"
   },
   "engines": {
     "node": ">=18.17"
