@@ -172,7 +172,7 @@ scripts/xdoc.sh logs       # 看启动横幅
 才装）→ 重建 → 起服务，跑完打印访问地址并做健康检查。
 
 ```bash
-cd <代码目录>          # 服务器上 clone 到哪就是哪，比如 /root/workspace
+cd <代码目录>          # 服务器上 clone 到哪就是哪，比如 /root/workspace/xdoc
 scripts/update.sh
 ```
 
