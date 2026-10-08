@@ -1,0 +1,16 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "xdoc": {
+      "type": "local",
+      "command": [
+        "node",
+        "/Users/lyn/codes/project/xdoc/dist/cli.js",
+        "mcp",
+        "/Users/lyn/codes/project/xdoc/examples",
+        "/Users/lyn/codes/project/xdoc/notes"
+      ],
+      "enabled": true
+    }
+  }
+}

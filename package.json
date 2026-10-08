@@ -1,0 +1,43 @@
+{
+  "name": "xdoc",
+  "version": "0.1.0",
+  "description": "支持自定义嵌入体语法的 Markdown 文档浏览工具",
+  "type": "module",
+  "bin": {
+    "xdoc": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "public"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "build:watch": "node scripts/build.mjs --watch",
+    "dev": "node scripts/build.mjs && tsx src/cli.ts examples",
+    "start": "node dist/cli.js",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test test/*.test.ts"
+  },
+  "engines": {
+    "node": ">=18.17"
+  },
+  "keywords": [
+    "markdown",
+    "docs",
+    "renderer",
+    "extendsible"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "chokidar": "^4.0.3",
+    "esbuild": "^0.25.0",
+    "highlight.js": "^11.11.1",
+    "markdown-it": "^14.1.0"
+  },
+  "devDependencies": {
+    "@types/markdown-it": "^14.1.2",
+    "@types/node": "^22.10.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}
