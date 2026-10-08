@@ -100,7 +100,21 @@ scripts/init.sh --start           # 一条龙：装 Node → 装依赖 → 构�
 Agent   ──── http(s)://server:1998/mcp ─┘  └── <root>/spaces/…
 ```
 
-### 1. 服务器上跑起来
+### 1. 一条命令部署（在本地跑）
+
+```bash
+scripts/deploy.sh root@1.2.3.4
+```
+
+它 ssh 上去 clone（仓库是公开的，服务器上无需配 GitHub 密钥；已有代码就
+`git pull`）→ 跑 `scripts/init.sh --start` → 从日志里取回令牌 → 打印访问地址、
+MCP 端点与现成的 Agent 配置。**装 Node、装依赖、构建都在服务器上做**，本地只要
+ssh 能免密登录。
+
+> 端口默认 1998，其余选项见 `scripts/deploy.sh -h`；`--dry-run` 可以只看它打算
+> 在服务器上执行什么。
+
+代码已经在服务器上，或者想自己一步步来，就在服务器上跑：
 
 ```bash
 git clone <repo> && cd xdoc
@@ -611,6 +625,7 @@ xdoc mcp [数据根目录]        启动 MCP stdio 服务
 ```
 xdoc                    # 一键入口：缺依赖自动装、缺产物自动构建，然后转发给 CLI
 scripts/
+├── deploy.sh           # 本地一条命令部署到远程服务器（ssh + clone + init.sh）
 ├── xdoc.sh             # 后台服务管理（start / stop / restart / status / logs）
 ├── init.sh             # 新机器初始化（装 Node → 装依赖 → 构建 → 启动）
 └── build.mjs           # 构建 dist/cli.js 与前端资源
