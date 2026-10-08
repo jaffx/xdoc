@@ -25,6 +25,10 @@ RUN_DIR="$REPO_DIR/.run"
 
 PORT="${XDOC_PORT:-}"
 HOST="${XDOC_HOST:-}"
+# 监听地址是命令行/环境变量给的，还是从默认值来的。默认值不能往命令行上传——
+# 那会盖掉 config.json 里的 host，详见 cmd_start 里的注释
+HOST_EXPLICIT=0
+[ -n "${XDOC_HOST:-}" ] && HOST_EXPLICIT=1
 ROOT_DIR=""
 # 命令行 / 环境变量显式给的令牌。来自 config.json 的另算——
 # 那种情况下不往命令行上传，免得令牌出现在 ps 的输出里
@@ -129,6 +133,19 @@ apply_settings() {
   HOST="${HOST:-${cfg[3]:-127.0.0.1}}"
 }
 
+# 补读一次 config.json。首次运行时那份文件是 CLI 起来才生成的（令牌也是那时
+# 随机出来的），启动前根本读不到；不补读的话健康检查没带令牌，会一直 401，
+# 于是"服务其实起来了"被误报成启动失败
+refresh_settings() {
+  local -a cfg=()
+  mapfile -t cfg < <(read_settings)
+  [ -n "$TOKEN" ] || TOKEN="${cfg[0]:-}"
+  [ -n "$CERT" ] || CERT="${cfg[1]:-}"
+  [ -n "$KEY" ] || KEY="${cfg[2]:-}"
+  [ "$HOST_EXPLICIT" -eq 0 ] && [ -n "${cfg[3]:-}" ] && HOST="${cfg[3]}"
+  return 0
+}
+
 # ---------- 健康检查 ----------
 
 probe_host() {
@@ -140,15 +157,23 @@ scheme() { [ -n "$CERT" ] && [ -n "$KEY" ] && printf 'https' || printf 'http'; }
 
 base_url() { printf '%s://%s:%s' "$(scheme)" "$(probe_host)" "$PORT"; }
 
-health_ok() {
+# 0 = 通；1 = 连不上；2 = 401（服务在跑，但本机没有令牌）。
+# 区分 2 是为了不把"我没带对令牌"说成"接口无响应"，那会让人白查半天
+health_probe() {
   command -v curl >/dev/null 2>&1 || return 0
   # 开了令牌时健康检查也得带令牌，否则永远 401。
   # https 加 -k：证书可能是自签的，而这里只探本机存活，不用于对外校验
-  local -a args=(-fsS -m 2 -o /dev/null)
+  local -a args=(-sS -m 2 -o /dev/null -w '%{http_code}')
   [ "$(scheme)" = "https" ] && args+=(-k)
   [ -n "$TOKEN" ] && args+=(-H "Authorization: Bearer $TOKEN")
-  curl "${args[@]}" "$(base_url)/api/spaces" 2>/dev/null
+  local code
+  code="$(curl "${args[@]}" "$(base_url)/api/spaces" 2>/dev/null)" || return 1
+  [ "$code" = "200" ] && return 0
+  [ "$code" = "401" ] && return 2
+  return 1
 }
+
+health_ok() { health_probe; }
 
 # 进程是否存活
 pid_alive() { [ -n "${1:-}" ] && kill -0 "$1" 2>/dev/null; }
@@ -225,7 +250,11 @@ $( [ -n "$holder" ] && printf '  占用者：%s\n' "$holder" )
   fi
 
   mkdir -p "$RUN_DIR"
-  local -a args=(--host "$HOST" -p "$PORT")
+  local -a args=(-p "$PORT")
+  # 只有显式给的监听地址才往命令行传。默认值（127.0.0.1）传过去会盖掉
+  # config.json 里的 host —— 首次运行时 config.json 还没生成，于是
+  # "默认监听 0.0.0.0"永远生效不了，服务器上就变成只能在机器内部访问
+  [ "$HOST_EXPLICIT" -eq 1 ] && args+=(--host "$HOST")
   [ -n "$ROOT_DIR" ] && args+=(--root "$ROOT_DIR")
   # 显式指定的令牌才往命令行上传；config.json 里的那份由 CLI 自己读，
   # 免得令牌出现在 ps 里
@@ -242,6 +271,17 @@ $( [ -n "$holder" ] && printf '  占用者：%s\n' "$holder" )
   nohup "$NODE" "$CLI" "${args[@]}" >> "$LOG_FILE" 2>&1 &
   local new_pid=$!
   printf '%s' "$new_pid" > "$PID_FILE"
+
+  # config.json 是 CLI 起来之后才写的（令牌也才随机出来），所以先等它出现再补读，
+  # 否则健康检查拿不到令牌，会一直 401
+  local cfg_file i
+  cfg_file="$(resolve_root)/config.json"
+  for i in $(seq 1 20); do
+    [ -f "$cfg_file" ] && break
+    pid_alive "$new_pid" || break
+    sleep 0.1
+  done
+  refresh_settings
 
   # 等服务真正可用，最多 10 秒。
   # 先确认进程还活着再看健康检查——否则端口上若恰好有别的服务在应答，
@@ -311,10 +351,19 @@ cmd_status() {
   info "  运行时长：${uptime:-未知}"
   info "  端口   ：$PORT（$HOST）"
 
-  if health_ok; then
+  local rc=0
+  health_probe || rc=$?
+  if [ "$rc" -eq 0 ]; then
     info "  地址   ：$(base_url)"
     info "  健康检查：通过"
     return 0
+  fi
+
+  if [ "$rc" -eq 2 ]; then
+    info "  健康检查：401 —— 服务在跑，但这个数据根目录没有令牌"
+    info "  本次用的 root：$(resolve_root)"
+    info "  启动时若是别的 root，用 -r / XDOC_ROOT 指成同一个再来查"
+    return 1
   fi
 
   info "  健康检查：失败（进程在但接口无响应）"

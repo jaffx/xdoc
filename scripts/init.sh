@@ -17,6 +17,9 @@
 #
 # 前提：代码已经在服务器上（scp / tar / git clone 都行），本脚本不负责拉代码。
 #
+# 部署到服务器时，--host / --token 会一路传到 CLI；不传就读 <root>/config.json。
+# 写完 config.json 之后，前后重启都直接用 scripts/xdoc.sh restart 就行。
+#
 # 用法：scripts/init.sh [选项]
 
 set -euo pipefail
@@ -37,6 +40,10 @@ SKIP_BUILD=0
 FORCE=0
 DO_START=0
 PORT="${XDOC_PORT:-1998}"
+HOST=""
+TOKEN=""
+CERT=""
+KEY=""
 
 TMP_DIR=""
 CURL=""
@@ -71,12 +78,22 @@ xdoc 服务器初始化
   --skip-build          跳过 npm run build
   --start               构建完直接后台启动（等价 scripts/xdoc.sh start）
   -p, --port <端口>     启动端口，默认 1998
+      --host <地址>     监听地址，对外提供服务要 0.0.0.0（默认 127.0.0.1）
+      --token <令牌>    访问令牌；监听非本机地址时**必须**有令牌，否则拒绝启动
+      --cert <路径>     TLS 证书（PEM），与 --key 一起用则提供 https
+      --key <路径>      TLS 私钥（PEM）
   -h, --help            显示帮助
 
 示例：
   scripts/init.sh --check-only              # 先看看这台机器行不行
-  scripts/init.sh --start                   # 一条龙：装环境 + 构建 + 起服务
+  scripts/init.sh --start                   # 一条龙：装环境 + 构建 + 起服务（只监听本机）
+  scripts/init.sh --start --host 0.0.0.0 --token <令牌>
+                                            # 部署到服务器：对外提供服务
   scripts/init.sh --prefix ~/.local --swap 2048
+
+这几个部署参数也可以写进 <root>/config.json（默认 ~/.xdoc/config.json），
+之后起停就不用再带：
+  { "host": "0.0.0.0", "token": "自己定一个足够长的随机串" }
 EOF
 }
 
@@ -401,8 +418,20 @@ ensure_build() {
 
 start_service() {
   [ "$DO_START" -eq 1 ] || return 0
-  step "启动服务（端口 $PORT）"
-  "$REPO_DIR/scripts/xdoc.sh" start -p "$PORT"
+  # 不传 --token 也行：CLI 会读 <root>/config.json，首次运行还会自动生成一份
+  # 随机令牌。这里只是提前说明令牌从哪来，免得用户不知道去哪找
+  if [ -z "$TOKEN" ] && [ -n "$HOST" ] && [ "$HOST" != "127.0.0.1" ] && [ "$HOST" != "localhost" ]; then
+    info "  没指定 --token：用 <root>/config.json 里的令牌（首次运行自动生成，启动后见下）"
+  fi
+
+  local -a args=(start -p "$PORT")
+  [ -n "$HOST" ] && args+=(--host "$HOST")
+  [ -n "$TOKEN" ] && args+=(--token "$TOKEN")
+  [ -n "$CERT" ] && args+=(--cert "$CERT")
+  [ -n "$KEY" ] && args+=(--key "$KEY")
+
+  step "启动服务（$HOST:$PORT）"
+  "$REPO_DIR/scripts/xdoc.sh" "${args[@]}"
 }
 
 # ---------- 参数解析 ----------
@@ -419,6 +448,10 @@ while [ $# -gt 0 ]; do
     --skip-build)   SKIP_BUILD=1; shift ;;
     --start)        DO_START=1; shift ;;
     -p|--port)      PORT="${2:-}"; shift 2 ;;
+    --host)         HOST="${2:-}"; shift 2 ;;
+    --token)        TOKEN="${2:-}"; shift 2 ;;
+    --cert)         CERT="${2:-}"; shift 2 ;;
+    --key)          KEY="${2:-}"; shift 2 ;;
     -h|--help)      usage; exit 0 ;;
     *)              usage; die "未知参数：$1" ;;
   esac

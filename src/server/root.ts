@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { cp, mkdir, readdir, writeFile } from 'node:fs/promises';
 import os from 'node:os';
@@ -130,14 +131,17 @@ export interface EnsureRootResult {
 }
 
 /**
- * 补一份默认 config.json，好让人知道这个文件存在、该往哪填令牌。
- * 只写 token 一项：host / port 之类不写进去，免得把「端口被占用自动 +1」
- * 这类默认行为变成"显式指定"。文件里要放密钥，建成 0600。
+ * 补一份默认 config.json，默认就是「能对外用」的样子：监听 0.0.0.0 + 随机令牌。
+ * 目的是 clone 到服务器上不用先手写配置，起来就能从外面访问，令牌在启动横幅里打印。
+ *
+ * 不写 port：写进去等于"显式指定端口"，会让「端口被占用自动 +1」失效。
+ * 已有文件一律不动，因此本地老 root 的行为不受影响。文件里有令牌，建成 0600。
  */
 async function ensureConfigFile(root: string): Promise<void> {
   const file = path.join(root, CONFIG_FILE);
   if (existsSync(file)) return;
-  await writeFile(file, `${JSON.stringify({ token: '' }, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+  const settings = { host: '0.0.0.0', token: randomBytes(24).toString('base64url') };
+  await writeFile(file, `${JSON.stringify(settings, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
 }
 
 /**

@@ -43,7 +43,7 @@ npm run dev
 `node dist/cli.js` 是前台进程，关掉终端就没了。要长期挂着用 `scripts/xdoc.sh`：
 
 ```bash
-scripts/xdoc.sh start          # 后台启动，默认 127.0.0.1:1998
+scripts/xdoc.sh start          # 后台启动，默认端口 1998（监听地址取自 config.json）
 scripts/xdoc.sh status         # 运行状态（PID / 端口 / 健康检查）
 scripts/xdoc.sh logs           # 跟踪日志
 scripts/xdoc.sh restart
@@ -104,23 +104,37 @@ Agent   ──── http(s)://server:1998/mcp ─┘  └── <root>/spaces/�
 
 ```bash
 git clone <repo> && cd xdoc
-scripts/init.sh --start          # 环境不齐的机器：装 Node → 装依赖 → 构建 → 后台启动
+scripts/init.sh --start          # 装 Node → 装依赖 → 构建 → 后台启动，一条命令
 ```
 
-环境已经齐了就用 `./xdoc`（前台）或 `scripts/xdoc.sh start`（后台）。
-
-### 2. 写配置
-
-编辑 `<root>/config.json`（默认 `~/.xdoc/config.json`，首次启动时已自动生成，
-权限 0600），改完重启服务即可生效：
+`<root>/config.json`（默认 `~/.xdoc/config.json`）首次运行会自动生成，默认就写成
+**能对外用**的样子——监听 `0.0.0.0` + 随机令牌，权限 0600：
 
 ```json
 {
   "host": "0.0.0.0",
-  "port": 1998,
-  "token": "自己定一个足够长的随机串"
+  "token": "N3f...（自动生成的随机串）"
 }
 ```
+
+**令牌会打印在启动横幅里**，也是唯一需要记住的东西：
+
+```
+  xdoc 已启动 -> http://localhost:1998
+  访问令牌： N3f...（复制这串）
+  MCP 端点： http://localhost:1998/mcp
+```
+
+服务器上让进程跑在后台、拿启动横幅与日志：
+
+```bash
+scripts/xdoc.sh start      # 后台启动（读 config.json）
+scripts/xdoc.sh logs       # 看横幅里的令牌
+```
+
+环境已经齐了也可以前台跑：`./xdoc`。
+
+想换令牌或改端口，编辑 config.json 后 `scripts/xdoc.sh restart`。
 
 `token` 是**共享令牌**，一个字符串就够了。启动后：
 
@@ -132,10 +146,10 @@ scripts/init.sh --start          # 环境不齐的机器：装 Node → 装依�
 - 服务器没有令牌又想监听 `0.0.0.0`？xdoc 会**拒绝启动**，除非你明确加
   `--allow-anonymous`。手滑把读写删文档的接口开放给全网这件事，值得多一道拦截
 
-生成一个随机令牌：
+默认生成的令牌就是个随机串，嫌长就自己换短一点的，反正只有你在用：
 
-```bash
-node -e 'console.log(require("crypto").randomBytes(24).toString("base64url"))'
+```json
+{ "host": "0.0.0.0", "token": "xdoc" }
 ```
 
 ### 3. 放行端口

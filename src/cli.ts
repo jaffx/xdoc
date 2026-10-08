@@ -16,7 +16,7 @@ xdoc - 支持空间与自定义嵌入体语法的 Markdown 文档浏览工具
 
   <root>/
   ├── index.json      # 空间索引
-  ├── config.json     # 部署参数（token / host / port / cert / key），首次运行自动生成
+  ├── config.json     # 部署参数（host / token / port / cert / key），首次运行自动生成
   └── spaces/<空间>/  # meta.json + xdoc.config.ts + doc/
 
 不传数据根目录时使用 ~/.xdoc，也可用 XDOC_ROOT 环境变量指定。
@@ -35,15 +35,20 @@ xdoc - 支持空间与自定义嵌入体语法的 Markdown 文档浏览工具
   -h, --help          显示帮助
   -v, --version       显示版本
 
-远程部署：把文档服务挂到服务器上，本地 Agent 通过 HTTP 调用 MCP。
+远程部署：把文档服务挂到服务器上，本地浏览器与 Agent 通过 HTTP 读写。
 
-  在 <root>/config.json 里写好部署参数，之后启动就不用带任何选项：
+  <root>/config.json 首次运行会自动生成，默认就写成能对外用的样子：
 
-    { "host": "0.0.0.0", "token": "自己定一个足够长的随机串" }
+    { "host": "0.0.0.0", "token": "<自动生成的随机令牌>" }
+
+  令牌在启动横幅里打印，浏览器打开后填一次即可。想自己指定就改这个文件，
+  或者用下面的 --host / --token 覆盖。之后起停都不用再带选项：
+
+    scripts/init.sh --start                     # 装环境 + 构建 + 后台启动
+    scripts/xdoc.sh restart                     # 改完 config.json 重启
 
   MCP 端点是 http://<服务器>:1998/mcp，客户端带 Authorization: Bearer <令牌>。
-  令牌走的是明文 HTTP，只适合内网、VPN 或 SSH 隧道；要过公网请在 config.json
-  里配 cert / key 启用 https（或把 xdoc 挂在带证书的反向代理后面）。
+  令牌走的是明文 HTTP，要过公网请配 cert / key 启用 https（或挂在反向代理后面）。
 
 MCP 示例（Agent 配置，本地 stdio）：
   { "command": "npx", "args": ["xdoc", "mcp"] }
@@ -147,16 +152,13 @@ async function main() {
     console.error('确实不需要认证（如已在可信内网）就加 --allow-anonymous。');
     process.exit(1);
   }
-  if (token && !tls) {
-    console.error('[xdoc] 提醒：令牌走的是明文 HTTP，只适合内网、VPN 或 SSH 隧道；');
-    console.error('[xdoc]       需要过公网请配 --cert / --key 启用 https。');
-  }
-
   const running = await startServer({ root, port, host, token: token || undefined, tls });
   console.log('');
   console.log(`  xdoc 已启动 -> ${running.url}`);
   if (token) {
-    console.log(`  访问令牌已启用，MCP 端点 ${running.url}/mcp（Authorization: Bearer <令牌>）`);
+    // 令牌直接打出来：默认配置里的令牌是随机生成的，不打印就没处抄
+    console.log(`  访问令牌： ${token}`);
+    console.log(`  MCP 端点： ${running.url}/mcp`);
   }
   console.log('  按 Ctrl+C 停止');
   console.log('');
