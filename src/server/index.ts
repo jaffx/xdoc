@@ -120,6 +120,56 @@ async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknow
   }
 }
 
+interface MultipartPart {
+  name: string;
+  filename?: string;
+  data: Buffer;
+}
+
+function parseMultipart(body: Buffer, boundary: string): MultipartPart[] {
+  const parts: MultipartPart[] = [];
+  const boundaryBuffer = Buffer.from(`--${boundary}`);
+  const endBuffer = Buffer.from(`--${boundary}--`);
+
+  let start = body.indexOf(boundaryBuffer);
+  if (start === -1) return parts;
+
+  while (true) {
+    start = body.indexOf(boundaryBuffer, start);
+    if (start === -1) break;
+
+    start += boundaryBuffer.length;
+    if (body[start] === 0x0d && body[start + 1] === 0x0a) {
+      start += 2;
+    }
+
+    const end = body.indexOf(boundaryBuffer, start);
+    if (end === -1) break;
+
+    const partData = body.subarray(start, end);
+    const headerEnd = partData.indexOf('\r\n\r\n');
+    if (headerEnd === -1) continue;
+
+    const headers = partData.subarray(0, headerEnd).toString('utf8');
+    const content = partData.subarray(headerEnd + 4, partData.length - 2);
+
+    const nameMatch = /name="([^"]+)"/.exec(headers);
+    const filenameMatch = /filename="([^"]+)"/.exec(headers);
+
+    if (nameMatch) {
+      parts.push({
+        name: nameMatch[1],
+        filename: filenameMatch?.[1],
+        data: content,
+      });
+    }
+
+    if (body.subarray(end, end + endBuffer.length).equals(endBuffer)) break;
+  }
+
+  return parts;
+}
+
 /** Authorization: Bearer <令牌> 里的令牌部分，取不到返回空串 */
 function bearerToken(req: IncomingMessage): string {
   const raw = req.headers.authorization;
@@ -303,6 +353,72 @@ export async function startServer(options: StartOptions): Promise<RunningServer>
         await deleteEntry(runtime.info.docRoot, rel, recursive);
         broadcast('tree', { space: runtime.info.id, event: 'unlink', path: rel });
         sendJson(res, 200, { space: runtime.info.id, path: rel });
+        return;
+      }
+
+      // ---- 素材管理 ----
+      if (pathname === '/api/assets' && req.method === 'GET') {
+        const runtime = resolveSpace();
+        const dir = url.searchParams.get('dir') ?? undefined;
+        const items = await runtime.assets.list(dir);
+        sendJson(res, 200, { space: runtime.info.id, items });
+        return;
+      }
+
+      if (pathname === '/api/assets/upload' && req.method === 'POST') {
+        const contentType = req.headers['content-type'] ?? '';
+        if (!contentType.includes('multipart/form-data')) {
+          throw httpError(400, '需要 multipart/form-data');
+        }
+
+        const runtime = resolveSpace();
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) chunks.push(chunk as Buffer);
+        const body = Buffer.concat(chunks);
+
+        const boundary = contentType.split('boundary=')[1];
+        if (!boundary) throw httpError(400, '缺少 boundary');
+
+        const parts = parseMultipart(body, boundary);
+        const filePart = parts.find((p) => p.name === 'file');
+        if (!filePart || !filePart.filename) throw httpError(400, '缺少 file 字段');
+
+        const targetPath = parts.find((p) => p.name === 'path')?.data.toString('utf8');
+        const asset = await runtime.assets.upload(filePart.data, filePart.filename, targetPath);
+
+        broadcast('assets', { space: runtime.info.id, event: 'add', path: asset.path });
+        sendJson(res, 200, { space: runtime.info.id, asset });
+        return;
+      }
+
+      if (pathname === '/api/assets/rename' && req.method === 'POST') {
+        const body = await readJsonBody(req);
+        const runtime = resolveSpaceFromBody(body);
+        const from = String(body.from ?? '');
+        const to = String(body.to ?? '');
+        const newPath = await runtime.assets.rename(from, to);
+        broadcast('assets', { space: runtime.info.id, event: 'rename', from, to: newPath });
+        sendJson(res, 200, { space: runtime.info.id, from, to: newPath });
+        return;
+      }
+
+      if (pathname === '/api/assets' && req.method === 'DELETE') {
+        const runtime = resolveSpace();
+        const rel = url.searchParams.get('path');
+        if (!rel) throw httpError(400, '缺少 path 参数');
+        await runtime.assets.delete(rel);
+        broadcast('assets', { space: runtime.info.id, event: 'delete', path: rel });
+        sendJson(res, 200, { space: runtime.info.id, path: rel });
+        return;
+      }
+
+      if (pathname === '/api/assets/file') {
+        const runtime = resolveSpace();
+        const rel = url.searchParams.get('path');
+        if (!rel) throw httpError(400, '缺少 path 参数');
+        const absolute = runtime.assets.resolve(rel);
+        if (!existsSync(absolute)) throw httpError(404, '素材不存在');
+        sendFile(res, absolute);
         return;
       }
 

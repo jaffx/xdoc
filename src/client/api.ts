@@ -28,6 +28,14 @@ export interface EmbedInfo {
   description: string;
 }
 
+export interface AssetInfo {
+  path: string;
+  name: string;
+  size: number;
+  mimeType: string;
+  mtime: number;
+}
+
 const TOKEN_KEY = 'xdoc:token';
 
 /** 服务端要求令牌但本地没有 / 不对时抛这个，调用方据此弹输入框而不是当普通故障 */
@@ -169,4 +177,46 @@ export async function fetchStyles(space: string): Promise<string> {
 
 export function fetchEmbeds(space: string): Promise<EmbedInfo[]> {
   return request<EmbedInfo[]>(`/api/embeds?space=${encodeURIComponent(space)}`);
+}
+
+export function fetchAssets(space: string, dir?: string): Promise<{ space: string; items: AssetInfo[] }> {
+  const url = dir
+    ? `/api/assets?space=${encodeURIComponent(space)}&dir=${encodeURIComponent(dir)}`
+    : `/api/assets?space=${encodeURIComponent(space)}`;
+  return request(url);
+}
+
+export async function uploadAsset(space: string, file: File, targetPath?: string): Promise<AssetInfo> {
+  const formData = new FormData();
+  formData.append('file', file);
+  if (targetPath) formData.append('path', targetPath);
+
+  const response = await fetch(`/api/assets/upload?space=${encodeURIComponent(space)}`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: formData,
+  });
+
+  if (response.status === 401) throw new AuthError('需要访问令牌');
+  if (!response.ok) {
+    const data = (await response.json()) as { error?: string };
+    throw new Error(data.error ?? '上传失败');
+  }
+
+  const data = (await response.json()) as { asset: AssetInfo };
+  return data.asset;
+}
+
+export function renameAsset(space: string, from: string, to: string): Promise<{ space: string; from: string; to: string }> {
+  return request('/api/assets/rename', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ space, from, to }),
+  });
+}
+
+export function deleteAsset(space: string, path: string): Promise<{ space: string; path: string }> {
+  return request(`/api/assets?space=${encodeURIComponent(space)}&path=${encodeURIComponent(path)}`, {
+    method: 'DELETE',
+  });
 }

@@ -434,6 +434,90 @@ function buildTools(manager: SpaceManager, persistIndex: () => void): ToolDefini
         return { html: runtime.renderer.render(asString(args, 'markdown'), {}) };
       },
     },
+    // ---- 素材管理 ----
+    {
+      name: 'list_assets',
+      description: '列出空间内的素材文件（图片、视频、音频等）',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          space: SPACE_PROP,
+          dir: { type: 'string', description: '子目录（可选，如 images）' },
+        },
+        additionalProperties: false,
+      },
+      handler: async (args) => {
+        const runtime = resolveSpace(args.space);
+        const dir = asOptionalString(args, 'dir');
+        const items = await runtime.assets.list(dir);
+        return { space: runtime.info.id, items };
+      },
+    },
+    {
+      name: 'upload_asset',
+      description: '上传素材到空间素材库（base64 编码的文件内容）',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          space: SPACE_PROP,
+          content: { type: 'string', description: 'base64 编码的文件内容' },
+          filename: { type: 'string', description: '文件名（含扩展名）' },
+          path: { type: 'string', description: '目标路径（可选，默认按类型自动分目录）' },
+        },
+        required: ['content', 'filename'],
+        additionalProperties: false,
+      },
+      handler: async (args) => {
+        const runtime = resolveSpace(args.space);
+        const content = asString(args, 'content');
+        const filename = asString(args, 'filename');
+        const targetPath = asOptionalString(args, 'path');
+        
+        const buffer = Buffer.from(content, 'base64');
+        const asset = await runtime.assets.upload(buffer, filename, targetPath);
+        return { space: runtime.info.id, asset };
+      },
+    },
+    {
+      name: 'delete_asset',
+      description: '删除空间内的素材',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          space: SPACE_PROP,
+          path: { type: 'string', description: '素材相对路径' },
+        },
+        required: ['path'],
+        additionalProperties: false,
+      },
+      handler: async (args) => {
+        const runtime = resolveSpace(args.space);
+        const path = asString(args, 'path');
+        await runtime.assets.delete(path);
+        return { space: runtime.info.id, path, deleted: true };
+      },
+    },
+    {
+      name: 'rename_asset',
+      description: '重命名或移动素材',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          space: SPACE_PROP,
+          from: { type: 'string', description: '原路径' },
+          to: { type: 'string', description: '新路径' },
+        },
+        required: ['from', 'to'],
+        additionalProperties: false,
+      },
+      handler: async (args) => {
+        const runtime = resolveSpace(args.space);
+        const from = asString(args, 'from');
+        const to = asString(args, 'to');
+        const newPath = await runtime.assets.rename(from, to);
+        return { space: runtime.info.id, from, to: newPath };
+      },
+    },
   ];
 }
 

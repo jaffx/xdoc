@@ -19,6 +19,7 @@ import {
   type SpaceInfo,
   type TreeNode,
 } from './api';
+import { createAssetsPanel } from './assets';
 import { renderDiagrams } from './diagram';
 
 const $ = <T extends Element = HTMLElement>(selector: string) => document.querySelector(selector) as T;
@@ -122,6 +123,24 @@ let current: string | null = null;
 let tocObserver: IntersectionObserver | null = null;
 let tocToggle: HTMLButtonElement | null = null;
 let editingSpaceId: string | null = null;
+
+const assetsPanel = createAssetsPanel(() => spaceId);
+assetsPanel.onInsert = (content) => {
+  // content 可能是单个 path 或多个 path 的组合
+  let syntax: string;
+  if (content.includes(':::asset')) {
+    // 已经是完整语法，直接使用
+    syntax = content;
+  } else {
+    // 单个 path，包装成语法
+    syntax = `:::asset path="${content}" :::\n`;
+  }
+  
+  navigator.clipboard.writeText(syntax).then(() => {
+    const lines = syntax.split('\n').filter(l => l.trim());
+    toast(`已复制 ${lines.length} 个素材引用到剪贴板`);
+  });
+};
 
 // ---------- 工具 ----------
 
@@ -870,6 +889,12 @@ async function refreshCurrent(keepScroll = true) {
 function renderDoc(doc: DocPayload, keepScroll = false) {
   const scrollTop = els.scroller.scrollTop;
   els.content.innerHTML = doc.html;
+  
+  // 底部留白
+  const spacer = document.createElement('div');
+  spacer.style.height = '150px';
+  els.content.appendChild(spacer);
+  
   enhanceContent();
   buildToc();
   els.scroller.scrollTop = keepScroll ? scrollTop : 0;
@@ -1420,6 +1445,22 @@ async function boot() {
   els.exportBtn.addEventListener('click', () => void exportDoc());
   els.newFile.addEventListener('click', () => beginCreate(null, 'file'));
   els.newFolder.addEventListener('click', () => beginCreate(null, 'folder'));
+  
+  const assetsToggle = document.createElement('button');
+  assetsToggle.type = 'button';
+  assetsToggle.className = 'tree-act';
+  assetsToggle.title = '素材库';
+  assetsToggle.innerHTML = '📷';
+  assetsToggle.addEventListener('click', () => {
+    const panel = document.getElementById('assets-panel');
+    if (panel && !panel.hidden) {
+      assetsPanel.hide();
+    } else {
+      assetsPanel.show();
+    }
+  });
+  els.treeToolbar?.appendChild(assetsToggle);
+  
   document.addEventListener('click', (event) => {
     if (!els.spaceSwitch.contains(event.target as Node)) closeSpaceMenu();
   });

@@ -3,6 +3,7 @@ import { mkdir, rename } from 'node:fs/promises';
 import path from 'node:path';
 import { watch, type FSWatcher } from 'chokidar';
 import { createRenderer, type XdocRenderer } from '../core/index';
+import { createAssetManager, type AssetManager } from './assets';
 import { findConfigFile, isConfigFile, loadConfig } from './config';
 import {
   docRootOf,
@@ -69,6 +70,7 @@ export class SpaceRuntime {
   renderer!: XdocRenderer;
   styles: string[] = [];
   configFile: string | null = null;
+  assets!: AssetManager;
 
   private watcher: FSWatcher | null = null;
   private configTimer: NodeJS.Timeout | undefined;
@@ -82,6 +84,7 @@ export class SpaceRuntime {
     this.renderer = createRenderer({ registry: config.registry });
     this.styles = config.styles;
     this.configFile = findConfigFile(this.info.dir);
+    this.assets = createAssetManager(this.info.dir);
 
     if (!this.watching) return;
     this.watcher = watch(this.info.dir, {
