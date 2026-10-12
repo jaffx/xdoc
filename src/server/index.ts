@@ -495,6 +495,26 @@ export async function startServer(options: StartOptions): Promise<RunningServer>
         return;
       }
 
+      if (pathname === '/api/chat' && req.method === 'POST') {
+        const runtime = resolveSpace();
+        const body = await readJsonBody(req);
+        const messages = body.messages;
+        const model = typeof body.model === 'string' ? body.model : undefined;
+        
+        if (!Array.isArray(messages)) {
+          throw httpError(400, 'messages 必须是数组');
+        }
+
+        try {
+          const { chat } = await import('./llm/index');
+          const reply = await chat(messages, runtime, { model, useTools: true });
+          sendJson(res, 200, { reply });
+        } catch (error: any) {
+          throw httpError(500, `LLM 调用失败: ${error.message}`);
+        }
+        return;
+      }
+
       if (pathname === '/api/events') {
         res.writeHead(200, {
           'Content-Type': 'text/event-stream; charset=utf-8',

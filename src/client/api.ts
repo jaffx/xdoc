@@ -220,3 +220,16 @@ export function deleteAsset(space: string, path: string): Promise<{ space: strin
     method: 'DELETE',
   });
 }
+
+export interface ChatMessage {
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+}
+
+export function chat(messages: ChatMessage[], space: string, model?: string): Promise<{ reply: string }> {
+  return request(`/api/chat?space=${encodeURIComponent(space)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ messages, model }),
+  });
+}

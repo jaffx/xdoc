@@ -20,6 +20,7 @@ import {
   type TreeNode,
 } from './api';
 import { createAssetsPanel } from './assets';
+import { initChatDialog, openChatDialog } from './chat';
 import { renderDiagrams } from './diagram';
 
 const $ = <T extends Element = HTMLElement>(selector: string) => document.querySelector(selector) as T;
@@ -32,6 +33,7 @@ const els = {
   crumb: $('#crumb'),
   status: $('#status'),
   exportBtn: $('#export-btn') as HTMLButtonElement,
+  chatBtn: $('#chat-btn') as HTMLButtonElement,
   scroller: $('#scroller'),
   toast: $('#toast'),
   themeToggle: $('#theme-toggle'),
@@ -141,6 +143,8 @@ assetsPanel.onInsert = (content) => {
     toast(`已复制 ${lines.length} 个素材引用到剪贴板`);
   });
 };
+
+initChatDialog();
 
 // ---------- 工具 ----------
 
@@ -1443,6 +1447,7 @@ async function boot() {
   });
 
   els.exportBtn.addEventListener('click', () => void exportDoc());
+  els.chatBtn.addEventListener('click', () => openChatDialog());
   els.newFile.addEventListener('click', () => beginCreate(null, 'file'));
   els.newFolder.addEventListener('click', () => beginCreate(null, 'folder'));
   
