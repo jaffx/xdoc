@@ -251,9 +251,18 @@ export async function startServer(options: StartOptions): Promise<RunningServer>
 
       const resolveSpace = (): SpaceRuntime => {
         const id = url.searchParams.get('space');
-        const runtime = id ? manager.get(id) : manager.default();
-        if (!runtime) throw httpError(404, id ? `空间不存在：${id}` : '尚未加载任何空间');
-        return runtime;
+        if (!id) {
+          const fallback = manager.default();
+          if (!fallback) throw httpError(404, '尚未加载任何空间');
+          return fallback;
+        }
+        const byId = manager.get(id);
+        if (byId) return byId;
+        // 与 MCP 一致：id 找不到时按名称兜底（不区分大小写）
+        const key = id.trim().toLowerCase();
+        const byName = manager.list().find((space) => space.name.toLowerCase() === key);
+        if (byName) return manager.get(byName.id)!;
+        throw httpError(404, `空间不存在：${id}`);
       };
 
       // ---- 空间管理 ----
@@ -495,23 +504,156 @@ export async function startServer(options: StartOptions): Promise<RunningServer>
         return;
       }
 
+      // ---- AI 助手（对话历史按空间持久化在 <space>/.chat/history.json）----
+
+      if (pathname === '/api/chat/history') {
+        const runtime = resolveSpace();
+        const { loadChatHistory, clearChatHistory } = await import('./chat');
+        if (req.method === 'GET') {
+          sendJson(res, 200, { turns: loadChatHistory(runtime.info) });
+          return;
+        }
+        if (req.method === 'DELETE') {
+          clearChatHistory(runtime.info);
+          sendJson(res, 200, { ok: true });
+          return;
+        }
+        throw httpError(405, '仅支持 GET / DELETE');
+      }
+
       if (pathname === '/api/chat' && req.method === 'POST') {
         const runtime = resolveSpace();
         const body = await readJsonBody(req);
-        const messages = body.messages;
+        const message = typeof body.message === 'string' ? body.message.trim() : '';
         const model = typeof body.model === 'string' ? body.model : undefined;
-        
-        if (!Array.isArray(messages)) {
-          throw httpError(400, 'messages 必须是数组');
+        const docPath = typeof body.docPath === 'string' && body.docPath ? body.docPath : undefined;
+
+        if (!message) {
+          throw httpError(400, '缺少 message');
         }
 
+        const { appendChatTurns, buildSystemPrompt, loadChatHistory, windowMessages } = await import('./chat');
+
         try {
+          appendChatTurns(runtime.info, [{ role: 'user', content: message, at: Date.now() }]);
+          const context = windowMessages(loadChatHistory(runtime.info));
           const { chat } = await import('./llm/index');
-          const reply = await chat(messages, runtime, { model, useTools: true });
+          const reply = await chat(context, runtime, {
+            model,
+            useTools: true,
+            instructions: buildSystemPrompt(runtime.info, docPath),
+          });
+          if (reply.trim()) {
+            appendChatTurns(runtime.info, [{ role: 'assistant', content: reply, at: Date.now() }]);
+          }
           sendJson(res, 200, { reply });
         } catch (error: any) {
           throw httpError(500, `LLM 调用失败: ${error.message}`);
         }
+        return;
+      }
+
+      // 流式对话：NDJSON 事件流（reasoning / text / tool / error / done）。
+      // 上下文为空间维度的持久历史（滑动窗口裁剪）；客户端断开时 abort LLM 请求并及时落库
+      if (pathname === '/api/chat/stream' && req.method === 'POST') {
+        const runtime = resolveSpace();
+        const body = await readJsonBody(req);
+        const message = typeof body.message === 'string' ? body.message.trim() : '';
+        const model = typeof body.model === 'string' ? body.model : undefined;
+        const docPath = typeof body.docPath === 'string' && body.docPath ? body.docPath : undefined;
+
+        if (!message) {
+          throw httpError(400, '缺少 message');
+        }
+
+        const { appendChatTurns, buildSystemPrompt, loadChatHistory, windowMessages } = await import('./chat');
+        const { chatStream } = await import('./llm/index');
+
+        appendChatTurns(runtime.info, [{ role: 'user', content: message, at: Date.now() }]);
+        const context = windowMessages(loadChatHistory(runtime.info));
+
+        const controller = new AbortController();
+        res.on('close', () => {
+          if (!res.writableEnded) controller.abort();
+        });
+
+        let stream: Awaited<ReturnType<typeof chatStream>>;
+        try {
+          stream = await chatStream(context, runtime, {
+            model,
+            useTools: true,
+            instructions: buildSystemPrompt(runtime.info, docPath),
+            abortSignal: controller.signal,
+          });
+        } catch (error: any) {
+          throw httpError(500, `LLM 调用失败: ${error.message}`);
+        }
+
+        res.writeHead(200, {
+          'Content-Type': 'application/x-ndjson; charset=utf-8',
+          'Cache-Control': 'no-store',
+          'X-Accel-Buffering': 'no',
+        });
+
+        const send = (event: unknown) => {
+          if (!res.writableEnded) res.write(JSON.stringify(event) + '\n');
+        };
+
+        let answer = '';
+        try {
+          for await (const part of stream.fullStream) {
+            if (controller.signal.aborted) break;
+            switch (part.type) {
+              case 'reasoning-delta':
+                send({ type: 'reasoning', delta: part.text });
+                break;
+              case 'text-delta':
+                answer += part.text;
+                send({ type: 'text', delta: part.text });
+                break;
+              case 'tool-input-start':
+                send({ type: 'tool', name: part.toolName });
+                break;
+              case 'error': {
+                const errorMessage = part.error instanceof Error ? part.error.message : String(part.error);
+                send({ type: 'error', message: errorMessage });
+                break;
+              }
+            }
+          }
+          send({ type: 'done' });
+        } catch (error: any) {
+          if (!controller.signal.aborted) {
+            send({ type: 'error', message: error?.message ?? String(error) });
+          }
+        } finally {
+          if (answer.trim()) {
+            appendChatTurns(runtime.info, [
+              {
+                role: 'assistant',
+                content: answer,
+                at: Date.now(),
+                ...(controller.signal.aborted ? { stopped: true } : {}),
+              },
+            ]);
+          }
+          if (controller.signal.aborted) console.log('[xdoc] 聊天生成已中止（客户端断开）');
+          res.end();
+        }
+        return;
+      }
+
+      // 把一段 markdown（含 xdoc 嵌入体）按空间扩展渲染为 HTML
+      if (pathname === '/api/render' && req.method === 'POST') {
+        const runtime = resolveSpace();
+        const body = await readJsonBody(req);
+        const markdown = typeof body.markdown === 'string' ? body.markdown : '';
+        if (!markdown.trim()) throw httpError(400, '缺少 markdown');
+        const html = runtime.renderer.render(markdown, {
+          root: runtime.info.docRoot,
+          space: runtime.info.id,
+        });
+        sendJson(res, 200, { html });
         return;
       }
 

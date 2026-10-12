@@ -226,10 +226,37 @@ export interface ChatMessage {
   content: string;
 }
 
-export function chat(messages: ChatMessage[], space: string, model?: string): Promise<{ reply: string }> {
+export interface ChatTurn {
+  role: 'user' | 'assistant';
+  content: string;
+  at?: number;
+  stopped?: boolean;
+}
+
+export function chat(
+  message: string,
+  space: string,
+  options: { docPath?: string; model?: string } = {},
+): Promise<{ reply: string }> {
   return request(`/api/chat?space=${encodeURIComponent(space)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ messages, model }),
+    body: JSON.stringify({ message, ...options }),
+  });
+}
+
+export function fetchChatHistory(space: string): Promise<{ turns: ChatTurn[] }> {
+  return request(`/api/chat/history?space=${encodeURIComponent(space)}`);
+}
+
+export function clearChatHistory(space: string): Promise<{ ok: boolean }> {
+  return request(`/api/chat/history?space=${encodeURIComponent(space)}`, { method: 'DELETE' });
+}
+
+export function renderMarkdown(space: string, markdown: string): Promise<{ html: string }> {
+  return request(`/api/render?space=${encodeURIComponent(space)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ markdown }),
   });
 }

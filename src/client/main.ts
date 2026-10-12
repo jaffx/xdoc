@@ -20,7 +20,7 @@ import {
   type TreeNode,
 } from './api';
 import { createAssetsPanel } from './assets';
-import { initChatDialog, openChatDialog } from './chat';
+import { initChatDialog, notifySpaceChanged, openChatDialog, syncChatDoc } from './chat';
 import { renderDiagrams } from './diagram';
 
 const $ = <T extends Element = HTMLElement>(selector: string) => document.querySelector(selector) as T;
@@ -144,7 +144,7 @@ assetsPanel.onInsert = (content) => {
   });
 };
 
-initChatDialog();
+initChatDialog(() => spaceId, () => current);
 
 // ---------- 工具 ----------
 
@@ -806,6 +806,7 @@ async function route() {
     spaceId = targetSpace;
     localStorage.setItem(SPACE_KEY, spaceId);
     current = null;
+    notifySpaceChanged();
     tree = await loadTree(spaceId);
     renderTree();
     filterTree(els.search.value);
@@ -853,6 +854,7 @@ async function openDoc(rel: string): Promise<boolean> {
   current = rel;
   saveLastDoc(id, rel);
   syncHash();
+  syncChatDoc();
   setCrumb([spaceName(id), ...rel.split('/')]);
   els.status.textContent = '加载中…';
   markActive();
