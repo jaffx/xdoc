@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { buildSystemPrompt, windowMessages, type ChatTurn } from '../src/server/chat';
-import type { SpaceInfo } from '../src/server/space';
+import { buildSystemPrompt, windowMessages, type ChatTurn } from '../src/server/chat/service';
+import type { SpaceInfo } from '../src/server/space/service';
 
 function turn(role: 'user' | 'assistant', content: string): ChatTurn {
   return { role, content, at: Date.now() };

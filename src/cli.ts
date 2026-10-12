@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { startServer } from './server/index';
-import { ensureRoot, loadSettings, resolveRoot } from './server/root';
+import { ensureRoot, loadSettings, resolveRoot } from './server/kernel/root';
 
 const HELP = `
 xdoc - 支持空间与自定义嵌入体语法的 Markdown 文档浏览工具

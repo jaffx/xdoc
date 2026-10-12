@@ -689,16 +689,15 @@ src/
 │   ├── attrs.ts        # key=value 参数解析
 │   └── embeds/         # 内置嵌入体 html / highlight / table / mermaid / echarts
 ├── server/
-│   ├── index.ts        # HTTP 服务与路由
-│   ├── root.ts         # 数据根目录：解析、建 spaces/ 与默认 config.json、目录名派生
-│   ├── space.ts        # SpaceManager：多空间运行时（dir + docRoot/监听/配置热加载）
-│   ├── meta.ts         # 空间身份与目录初始化（meta.json、doc/、旧目录迁移）
-│   ├── operations.ts   # 文档操作：新建/写入/替换/移动/删除/检索（HTTP 与 MCP 共用）
+│   ├── index.ts        # 组装点：监听、鉴权、路由分发、静态资源（本身不含业务）
+│   ├── context.ts      # 组装点与各模块的契约（ServerContext / RouteHandler）
 │   ├── bootstrap.ts    # 扫描 <root>/spaces 装载空间
-│   ├── persistence.ts  # 空间索引（<root>/index.json）
-│   ├── tree.ts         # markdown 目录树扫描（统一按名排序，隐藏 . 开头）
-│   ├── config.ts       # xdoc.config.ts 加载与编译
-│   └── settings.ts     # 设置读写：令牌与 AI 配置（掩码回显、合并写入）
+│   ├── kernel/         # 共享地基，不属任何模块：http · paths · events · errors · root
+│   ├── space/          # 空间模块：ctrl · service · manager · dao · types
+│   ├── doc/            # 文档模块：ctrl · service · dao
+│   ├── assets/         # 素材模块：ctrl · service · dao
+│   ├── chat/           # AI 对话模块：ctrl · service · manager · dao · types
+│   └── settings/       # 设置模块：ctrl · service · dao
 ├── mcp/
 │   └── server.ts       # 零依赖 MCP stdio 服务（JSON-RPC）
 ├── client/             # 浏览器端：空间切换、路由、目录树管理、TOC、交互增强
@@ -706,6 +705,8 @@ src/
 │   └── settings.ts     # 设置面板（AI 配置与访问令牌）
 └── cli.ts
 ```
+
+服务端按模块分目录，模块内按层分文件：`ctrl` 入口 → `service` 业务 → `manager` 外部资源 → `dao` 存储。跨模块只许调对方的 `service`，依赖单向向下。各层职责、命名前缀与「文件 → 层」的对应关系见 [docs/代码风格.md](docs/代码风格.md)。
 
 服务接口（除 `/api/spaces` 外均可用 `?space=<id>` 指定空间，缺省第一个空间）。**空间相关响应只含 id、名称、备注与时间戳，不含任何文件系统路径**：
 

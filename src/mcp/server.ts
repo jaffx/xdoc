@@ -5,16 +5,15 @@ import {
   appendDoc,
   deleteEntry,
   editDoc,
-  OperationError,
+  listDocPaths,
   readDoc,
   renameEntry,
   searchDocs,
   writeDoc,
-} from '../server/operations';
-import { loadIndex, saveIndex } from '../server/persistence';
-import { SpaceManager, type SpaceRuntime } from '../server/space';
-import { listDocPaths } from '../server/tree';
+} from '../server/doc/service';
 
+import { SrvcSpaces, persistSpaceIndex, type MgrSpaceRuntime } from '../server/space/service';
+import { InvalidInputError, NotFoundError } from '../server/kernel/errors';
 const PROTOCOL_VERSION = '2024-11-05';
 const SERVER_INFO = { name: 'xdoc', version: '0.1.0' };
 
@@ -46,7 +45,7 @@ function formatResult(result: unknown): string {
 
 function asString(args: JsonObject, key: string): string {
   const value = args[key];
-  if (typeof value !== 'string' || !value) throw new OperationError(`缺少参数 ${key}`);
+  if (typeof value !== 'string' || !value) throw new InvalidInputError(`缺少参数 ${key}`);
   return value;
 }
 
@@ -162,17 +161,17 @@ flowchart LR
 
 注意：当前空间可能通过 xdoc.config.ts 注册了额外的嵌入体，写之前先调 list_embeds 看实际可用列表。`;
 
-function buildTools(manager: SpaceManager, persistIndex: () => void): ToolDefinition[] {
-  const resolveSpace = (value: unknown): SpaceRuntime => {
+function buildTools(manager: SrvcSpaces, persistIndex: () => void): ToolDefinition[] {
+  const resolveSpace = (value: unknown): MgrSpaceRuntime => {
     const spaces = manager.list();
-    if (spaces.length === 0) throw new OperationError('尚未加载任何空间');
+    if (spaces.length === 0) throw new NotFoundError('尚未加载任何空间');
     if (typeof value !== 'string' || !value.trim()) return manager.default()!;
     const key = value.trim();
     const byId = manager.get(key);
     if (byId) return byId;
     const byName = spaces.find((space) => space.name.toLowerCase() === key.toLowerCase());
     if (byName) return manager.get(byName.id)!;
-    throw new OperationError(`空间不存在：${key}。可用空间：${spaces.map((space) => space.name).join('、')}`);
+    throw new NotFoundError(`空间不存在：${key}。可用空间：${spaces.map((space) => space.name).join('、')}`);
   };
 
   return [
@@ -534,7 +533,7 @@ export interface McpSessionOptions {
    * 同一个进程里连同一份根目录开两个 manager 会让两边看到的空间列表分叉，
    * 所以能在服务端里挂的场合一律复用。
    */
-  manager?: SpaceManager;
+  manager?: SrvcSpaces;
   /** 配合 manager 一起复用：写入空间索引的函数 */
   persistIndex?: () => void;
 }
@@ -551,10 +550,10 @@ export async function createMcpSession(options: McpSessionOptions): Promise<McpS
 
   const root = path.resolve(options.root);
   const ownManager = !options.manager;
-  const manager = options.manager ?? new SpaceManager(root, () => {}, { watch: false });
+  const manager = options.manager ?? new SrvcSpaces(root, () => {}, { watch: false });
   if (ownManager) await bootstrapSpaces(manager, root, log);
   const persistIndex =
-    options.persistIndex ?? (() => saveIndex(root, { ...loadIndex(root), order: manager.order() }));
+    options.persistIndex ?? (() => persistSpaceIndex(root, manager));
   const tools = buildTools(manager, persistIndex);
   const toolsByName = new Map(tools.map((tool) => [tool.name, tool]));
 

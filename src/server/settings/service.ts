@@ -1,13 +1,5 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { writeFile } from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
-import { loadSettings, type AiSettings } from './root';
-
-const CONFIG_FILE = 'config.json';
-
-/** opencode 的配置文件。xdoc 的 AI 配置早先只认这一份，老配置继续兜底读 */
-const OPENCODE_CONFIG = path.join(os.homedir(), '.config', 'opencode', 'opencode.json');
+import { loadSettings, type AiSettings } from '../kernel/root';
+import { configPathOf, readOpencodeAi, readRawConfig, writeRawConfig } from './dao';
 
 /** AI 配置的来路，面板上照实告诉用户 */
 export type AiSource = 'xdoc' | 'opencode' | 'none';
@@ -41,27 +33,13 @@ function maskSecret(secret: string): string {
   return `${secret.slice(0, 4)}••••${secret.slice(-4)}`;
 }
 
-function readRawConfig(file: string): Record<string, unknown> {
-  if (!existsSync(file)) return {};
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(readFileSync(file, 'utf8'));
-  } catch (error) {
-    throw new Error(`读取 ${file} 失败：${error instanceof Error ? error.message : String(error)}`);
-  }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error(`${file} 应该是一个 JSON 对象`);
-  }
-  return parsed as Record<string, unknown>;
-}
-
 /**
  * <root>/config.json 的读写口。
  *
- * 读经过 root.ts 的 loadSettings（解析 + 相对路径展开），写则直接改文件里的原始
- * JSON——把解析后的绝对路径写回去，会把用户写的相对路径固化下来。
+ * 掩码怎么给、缺省与空串怎么区分、opencode 那份怎么兜底——都是业务规则，不是存储。
+ * 读写原始 JSON 的两件事在 ./dao。
  */
-export class SettingsStore {
+export class SrvcSettings {
   readonly root: string;
   /**
    * 令牌在内存里留一份：面板改完立刻生效，写文件只是为了让重启后还在。
@@ -75,7 +53,7 @@ export class SettingsStore {
   }
 
   get configPath(): string {
-    return path.join(this.root, CONFIG_FILE);
+    return configPathOf(this.root);
   }
 
   get token(): string {
@@ -87,7 +65,7 @@ export class SettingsStore {
     const own = loadSettings(this.root).ai;
     if (own?.apiKey) return { settings: own, source: 'xdoc' };
 
-    const fallback = this.#fromOpencode();
+    const fallback = readOpencodeAi();
     if (fallback?.apiKey) {
       // 字段级合并：model / baseURL 只在 xdoc 里写过的话也算数
       return { settings: { ...fallback, ...own }, source: 'opencode' };
@@ -119,7 +97,8 @@ export class SettingsStore {
 
     if (patch.ai) {
       // 直接铺开原始对象而不是用解析结果：ai 段里将来多出来的字段不该被写没
-      const current = raw.ai && typeof raw.ai === 'object' && !Array.isArray(raw.ai) ? (raw.ai as Record<string, unknown>) : {};
+      const current =
+        raw.ai && typeof raw.ai === 'object' && !Array.isArray(raw.ai) ? (raw.ai as Record<string, unknown>) : {};
       const ai = { ...current };
       for (const key of ['apiKey', 'baseURL', 'model'] as const) {
         const value = patch.ai[key];
@@ -139,32 +118,7 @@ export class SettingsStore {
       else delete raw.token;
     }
 
-    await writeFile(this.configPath, `${JSON.stringify(raw, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+    await writeRawConfig(this.configPath, raw);
     return this.publicView();
-  }
-
-  /** 从 opencode 配置里捞一份兜底；格式不对或读不动就当没有，不影响 xdoc 启动 */
-  #fromOpencode(): AiSettings | undefined {
-    if (!existsSync(OPENCODE_CONFIG)) return undefined;
-    try {
-      const raw = JSON.parse(readFileSync(OPENCODE_CONFIG, 'utf8')) as {
-        provider?: Record<
-          string,
-          { npm?: string; options?: { baseURL?: string; apiKey?: string }; models?: Record<string, unknown> }
-        >;
-      };
-      const provider = Object.values(raw.provider ?? {})[0];
-      if (!provider || provider.npm !== '@ai-sdk/anthropic') return undefined;
-
-      const ai: AiSettings = {};
-      if (provider.options?.apiKey) ai.apiKey = provider.options.apiKey;
-      if (provider.options?.baseURL) ai.baseURL = provider.options.baseURL;
-      // models 里常有一个 'auto' 占位，选具体那个
-      const model = Object.keys(provider.models ?? {}).find((name) => name !== 'auto');
-      if (model) ai.model = model;
-      return ai.apiKey ? ai : undefined;
-    } catch {
-      return undefined;
-    }
   }
 }

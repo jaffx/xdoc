@@ -1,77 +1,66 @@
 import { existsSync, statSync } from 'node:fs';
-import { mkdir, readFile, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
-import os from 'node:os';
+import { mkdir, readFile, readdir, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { listDocPaths } from './tree';
 
-/** 带 HTTP 状态码的操作错误 */
-export class OperationError extends Error {
-  constructor(
-    message: string,
-    readonly statusCode = 400,
-  ) {
-    super(message);
+import { SKIP_DIRS, assertRelPath, normalizeDocPath, resolveExisting, resolveInside } from '../kernel/paths';
+import { ConflictError, InvalidInputError, NotFoundError } from '../kernel/errors';
+export interface TreeNode {
+  name: string;
+  path: string;
+  type: 'dir' | 'file';
+  children?: TreeNode[];
+}
+
+const MD_EXTENSIONS = new Set(['.md', '.markdown']);
+
+export async function scanTree(root: string, rel = ''): Promise<TreeNode[]> {
+  const absolute = path.join(root, rel);
+  let entries;
+  try {
+    entries = await readdir(absolute, { withFileTypes: true });
+  } catch {
+    return [];
   }
-}
 
-const SEGMENT_RE = /^[^/\\<>:"|?*\u0000-\u001f]+$/;
+  const dirs: TreeNode[] = [];
+  const files: TreeNode[] = [];
 
-/** 展开 ~ 开头的路径 */
-export function expandHome(input: string): string {
-  if (input === '~') return os.homedir();
-  if (input.startsWith('~/') || input.startsWith('~\\')) return path.join(os.homedir(), input.slice(2));
-  return input;
-}
-
-/** 校验单个路径片段（目录名/文件名） */
-export function assertSegment(segment: string, label = '名称'): void {
-  if (segment === '..') throw new OperationError('路径越界', 403);
-  if (!segment || segment === '.') throw new OperationError(`${label}不能为空`);
-  if (segment.startsWith('.')) throw new OperationError(`${label}不能以 . 开头`);
-  if (!SEGMENT_RE.test(segment)) throw new OperationError(`${label}包含非法字符：${segment}`);
-  if (segment.length > 200) throw new OperationError(`${label}过长`);
-}
-
-/** 规范化并校验相对路径 */
-export function assertRelPath(rel: string): string {
-  const normalized = rel.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
-  if (!normalized) throw new OperationError('路径不能为空');
-  for (const segment of normalized.split('/')) assertSegment(segment, '路径');
-  return normalized;
-}
-
-/** 安全解析到根目录内，越界抛 403 */
-export function resolveInside(root: string, rel: string): string {
-  const normalized = assertRelPath(rel);
-  const absolute = path.resolve(root, normalized);
-  if (absolute !== root && !absolute.startsWith(root + path.sep)) {
-    throw new OperationError('路径越界', 403);
+  for (const entry of entries) {
+    if (entry.name.startsWith('.') || SKIP_DIRS.has(entry.name)) continue;
+    const childRel = rel ? `${rel}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) {
+      dirs.push({ name: entry.name, path: childRel, type: 'dir', children: await scanTree(root, childRel) });
+    } else if (entry.isFile() && MD_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) {
+      files.push({ name: entry.name, path: childRel, type: 'file' });
+    }
   }
-  return absolute;
+
+  const compare = (a: TreeNode, b: TreeNode) =>
+    a.name.localeCompare(b.name, 'zh-Hans-CN', { numeric: true, sensitivity: 'base' });
+  dirs.sort(compare);
+  files.sort(compare);
+  // 文件夹与文件统一按名称排序
+  return [...dirs, ...files].sort(compare);
 }
 
-/** markdown 路径规范化：无扩展名时补 .md */
-export function normalizeDocPath(rel: string): string {
-  const normalized = assertRelPath(rel);
-  return /\.(md|markdown)$/i.test(normalized) ? normalized : `${normalized}.md`;
-}
-
-/** 解析已存在的条目，缺扩展名时尝试补 .md */
-export function resolveExisting(root: string, rel: string): string {
-  const normalized = assertRelPath(rel);
-  const direct = resolveInside(root, normalized);
-  if (!existsSync(direct) && !/\.(md|markdown)$/i.test(normalized)) {
-    const withExt = resolveInside(root, `${normalized}.md`);
-    if (existsSync(withExt)) return withExt;
-  }
-  return direct;
+/** 展平为 markdown 相对路径列表 */
+export async function listDocPaths(root: string): Promise<string[]> {
+  const paths: string[] = [];
+  const walk = (nodes: TreeNode[]) => {
+    for (const node of nodes) {
+      if (node.type === 'dir') walk(node.children ?? []);
+      else paths.push(node.path);
+    }
+  };
+  walk(await scanTree(root));
+  return paths;
 }
 
 /** 新建目录（支持多级路径） */
 export async function createFolder(root: string, rel: string): Promise<string> {
   const normalized = assertRelPath(rel);
   const absolute = resolveInside(root, normalized);
-  if (existsSync(absolute)) throw new OperationError(`已存在：${normalized}`, 409);
+  if (existsSync(absolute)) throw new ConflictError(`已存在：${normalized}`);
   await mkdir(absolute, { recursive: true });
   return normalized;
 }
@@ -80,7 +69,7 @@ export async function createFolder(root: string, rel: string): Promise<string> {
 export async function createDoc(root: string, rel: string, content?: string): Promise<string> {
   const normalized = normalizeDocPath(rel);
   const absolute = resolveInside(root, normalized);
-  if (existsSync(absolute)) throw new OperationError(`文件已存在：${normalized}`, 409);
+  if (existsSync(absolute)) throw new ConflictError(`文件已存在：${normalized}`);
   await mkdir(path.dirname(absolute), { recursive: true });
   const title = path.basename(normalized).replace(/\.(md|markdown)$/i, '');
   await writeFile(absolute, content ?? `# ${title}\n`);
@@ -115,14 +104,14 @@ export async function editDoc(
   newText: string,
   replaceAll = false,
 ): Promise<{ path: string; replacements: number }> {
-  if (!oldText) throw new OperationError('old_text 不能为空');
+  if (!oldText) throw new InvalidInputError('old_text 不能为空');
   const absolute = resolveExisting(root, rel);
-  if (!existsSync(absolute)) throw new OperationError(`文件不存在：${rel}`, 404);
+  if (!existsSync(absolute)) throw new NotFoundError(`文件不存在：${rel}`);
   const source = await readFile(absolute, 'utf8');
   const count = source.split(oldText).length - 1;
-  if (count === 0) throw new OperationError('未找到要替换的文本，请先 read_doc 确认内容');
+  if (count === 0) throw new InvalidInputError('未找到要替换的文本，请先 read_doc 确认内容');
   if (count > 1 && !replaceAll) {
-    throw new OperationError(`匹配到 ${count} 处文本，请提供更精确的 old_text，或设置 replace_all=true`);
+    throw new InvalidInputError(`匹配到 ${count} 处文本，请提供更精确的 old_text，或设置 replace_all=true`);
   }
   await writeFile(absolute, source.split(oldText).join(newText));
   return { path: path.relative(root, absolute).split(path.sep).join('/'), replacements: count };
@@ -131,18 +120,18 @@ export async function editDoc(
 /** 重命名 / 移动文件或目录，返回新的相对路径 */
 export async function renameEntry(root: string, from: string, to: string): Promise<string> {
   const fromAbsolute = resolveExisting(root, from);
-  if (!existsSync(fromAbsolute)) throw new OperationError(`不存在：${from}`, 404);
+  if (!existsSync(fromAbsolute)) throw new NotFoundError(`不存在：${from}`);
   const info = statSync(fromAbsolute);
   let target = assertRelPath(to);
   if (info.isFile() && /\.(md|markdown)$/i.test(path.basename(fromAbsolute)) && !path.extname(path.basename(target))) {
     target = `${target}.md`;
   }
   const toAbsolute = resolveInside(root, target);
-  if (toAbsolute === fromAbsolute) throw new OperationError('新旧路径相同');
+  if (toAbsolute === fromAbsolute) throw new InvalidInputError('新旧路径相同');
   if (info.isDirectory() && (toAbsolute === fromAbsolute || toAbsolute.startsWith(fromAbsolute + path.sep))) {
-    throw new OperationError('不能把目录移动到自身内部');
+    throw new InvalidInputError('不能把目录移动到自身内部');
   }
-  if (existsSync(toAbsolute)) throw new OperationError(`目标已存在：${target}`, 409);
+  if (existsSync(toAbsolute)) throw new ConflictError(`目标已存在：${target}`);
   await mkdir(path.dirname(toAbsolute), { recursive: true });
   await rename(fromAbsolute, toAbsolute);
   return target;
@@ -155,10 +144,10 @@ export async function deleteEntry(root: string, rel: string, recursive = false):
   try {
     info = await stat(absolute);
   } catch {
-    throw new OperationError(`不存在：${rel}`, 404);
+    throw new NotFoundError(`不存在：${rel}`);
   }
   if (info.isDirectory()) {
-    if (!recursive) throw new OperationError('删除目录需要 recursive=true');
+    if (!recursive) throw new InvalidInputError('删除目录需要 recursive=true');
     await rm(absolute, { recursive: true, force: true });
   } else {
     await unlink(absolute);
@@ -178,14 +167,14 @@ export async function searchDocs(
   query: string,
   options: { regex?: boolean; caseSensitive?: boolean; limit?: number } = {},
 ): Promise<SearchMatch[]> {
-  if (!query) throw new OperationError('query 不能为空');
+  if (!query) throw new InvalidInputError('query 不能为空');
   const limit = options.limit && options.limit > 0 ? Math.min(options.limit, 500) : 50;
   let pattern: RegExp | null = null;
   if (options.regex) {
     try {
       pattern = new RegExp(query, options.caseSensitive ? '' : 'i');
     } catch (error) {
-      throw new OperationError(`正则表达式无效：${error instanceof Error ? error.message : error}`);
+      throw new InvalidInputError(`正则表达式无效：${error instanceof Error ? error.message : error}`);
     }
   }
   const needle = options.caseSensitive ? query : query.toLowerCase();
@@ -205,11 +194,22 @@ export async function searchDocs(
   return matches;
 }
 
+/**
+ * 定位一个已存在的文件，返回它的绝对路径（图片、附件这类不经渲染的读取用）。
+ *
+ * 「在不在」是存储层的事实，所以缺文件这件事在这里定性成 NotFoundError，
+ * 入口层不再自己 existsSync 一遍再手搓 404。
+ */
+export async function locate(root: string, rel: string): Promise<string> {
+  const absolute = resolveInside(root, rel);
+  if (!existsSync(absolute)) throw new NotFoundError(`文件不存在：${rel}`);
+  return absolute;
+}
+
 /** 读取文档内容 */
 export async function readDoc(root: string, rel: string): Promise<{ path: string; content: string }> {
   const absolute = resolveExisting(root, rel);
-  if (!existsSync(absolute)) throw new OperationError(`文件不存在：${rel}`, 404);
+  if (!existsSync(absolute)) throw new NotFoundError(`文件不存在：${rel}`);
   const content = await readFile(absolute, 'utf8');
   return { path: path.relative(root, absolute).split(path.sep).join('/'), content };
 }
-

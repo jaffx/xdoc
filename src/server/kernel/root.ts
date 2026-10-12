@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, readdir, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { expandHome } from './operations';
+import { expandHome } from './paths';
 
 /**
  * 数据根目录（root）结构：
@@ -23,7 +23,7 @@ const CONFIG_FILE = 'config.json';
 
 /**
  * AI 助手（:::chat）用到的模型配置。
- * apiKey 只往接口外送掩码，真值不出进程，见 server/settings.ts。
+ * apiKey 只往接口外送掩码，真值不出进程，见 server/settings/service.ts。
  */
 export interface AiSettings {
   apiKey?: string;

@@ -1,7 +1,7 @@
 import path from 'node:path';
-import { legacyRegistryHint, loadIndex, saveIndex } from './persistence';
-import { ensureRoot, listSpaceSlugs, spacesDirOf } from './root';
-import type { SpaceManager } from './space';
+import { ensureRoot, listSpaceSlugs, spacesDirOf } from './kernel/root';
+import { legacyRegistryHint, loadIndex, saveIndex } from './space/dao';
+import type { SrvcSpaces } from './space/service';
 
 /**
  * 从数据根目录加载空间：
@@ -10,7 +10,7 @@ import type { SpaceManager } from './space';
  * 3. 逐个装载；缺 doc/ 或仍是平铺结构的目录由 ensureSpaceDir 自动补齐
  */
 export async function bootstrapSpaces(
-  manager: SpaceManager,
+  manager: SrvcSpaces,
   root: string,
   log: (message: string) => void = () => {},
 ): Promise<void> {
