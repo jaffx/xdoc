@@ -1479,6 +1479,281 @@ body.is-modal-open {
   overflow: hidden;
 }
 
+/* ============ Settings Panel ============ */
+.settings-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.settings-modal[hidden] { display: none; }
+/* 面板内元素自带 display，会盖过 UA 的 [hidden]，统一强制生效 */
+.settings-modal [hidden] { display: none !important; }
+.settings-modal__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+}
+.settings-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(480px, 94vw);
+  max-height: 88vh;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+}
+.settings-panel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.settings-panel__head h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+.settings-panel__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 4px 20px 20px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.settings-section__title {
+  margin: 18px 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.settings-section__hint {
+  margin: 0 0 12px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-mute);
+}
+.settings-field + .settings-field {
+  margin-top: 14px;
+}
+.settings-field__label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-soft);
+}
+.settings-field__clear {
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-mute);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.settings-field__clear:hover {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.settings-field__input {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-soft);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+.settings-field__input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.settings-field__input::placeholder {
+  color: var(--text-mute);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+.settings-panel__foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-soft);
+}
+.settings-status {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-mute);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings-status.is-ok { color: var(--success); }
+.settings-status.is-error { color: var(--danger); }
+.settings-save {
+  padding: 8px 20px;
+  border: none;
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.settings-save:hover { filter: brightness(1.08); }
+.settings-save:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* ---- 设置面板：分区页签 ---- */
+.settings-tabs {
+  display: flex;
+  gap: 4px;
+}
+.settings-tab {
+  padding: 5px 12px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-mute);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.settings-tab:hover {
+  color: var(--text);
+  background: var(--bg-soft);
+}
+.settings-tab.is-active {
+  color: var(--text);
+  background: var(--accent-soft);
+}
+
+/* ---- MCP 接入：端点与配置片段 ---- */
+.settings-section__hint code {
+  padding: 1px 5px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--code-bg);
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+.settings-copy {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.settings-copy code {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--code-bg);
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow-x: auto;
+}
+.settings-copy__btn {
+  flex: none;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--text-soft);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.settings-copy__btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.settings-copy__btn.is-done {
+  border-color: var(--success);
+  color: var(--success);
+}
+
+/* 客户端切换：分段控件 */
+.settings-seg {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 14px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bg-soft);
+}
+.settings-seg__btn {
+  flex: 1 1 0;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-mute);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.settings-seg__btn:hover { color: var(--text); }
+.settings-seg__btn.is-active {
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 1px 2px rgba(20, 26, 46, 0.1);
+}
+
+.settings-code {
+  position: relative;
+  margin: 0 0 14px;
+}
+.settings-code pre {
+  margin: 0;
+  /* 右边留出常驻复制按钮的位置：折行后这个内边距才真的成为一条空白槽 */
+  padding: 12px 66px 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--code-bg);
+  line-height: 1.6;
+}
+.settings-code code {
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: var(--text);
+  /* 那条 claude mcp add 单行很长，横向滚动会钻到复制按钮底下，折行更好读；
+     复制拿的是 textContent，折的只是显示，拷出来仍是完整一行 */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.settings-code .settings-copy__btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  padding: 4px 9px;
+  font-size: 11px;
+}
+
 /* ============ Chat Dialog ============ */
 /* 内部元素的 display 会盖过 UA 的 [hidden]，统一强制生效 */
 .chat-dialog [hidden] {

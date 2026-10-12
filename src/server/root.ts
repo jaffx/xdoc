@@ -21,6 +21,17 @@ const SPACES_DIR = 'spaces';
 const TRASH_DIR = 'trash';
 const CONFIG_FILE = 'config.json';
 
+/**
+ * AI 助手（:::chat）用到的模型配置。
+ * apiKey 只往接口外送掩码，真值不出进程，见 server/settings.ts。
+ */
+export interface AiSettings {
+  apiKey?: string;
+  /** 兼容 Anthropic 协议的自建网关地址；留空走官方 api.anthropic.com */
+  baseURL?: string;
+  model?: string;
+}
+
 /** <root>/config.json：部署参数写在这里，省得每次启动都敲一长串选项 */
 export interface Settings {
   /** 访问令牌。设置了就要求 Bearer 令牌才能调用 /api/* 与 /mcp */
@@ -30,6 +41,7 @@ export interface Settings {
   /** TLS 证书与私钥路径（PEM），相对路径按数据根目录解析 */
   cert?: string;
   key?: string;
+  ai?: AiSettings;
 }
 
 /**
@@ -57,7 +69,26 @@ export function loadSettings(root: string): Settings {
     typeof value === 'string' && value.trim() ? path.resolve(root, expandHome(value.trim())) : undefined;
   settings.cert = resolve(raw.cert);
   settings.key = resolve(raw.key);
+  settings.ai = parseAiSettings(raw.ai);
   return settings;
+}
+
+/** ai 段解析：只认字符串字段，空串按「没写」处理，整段都没有就返回 undefined */
+export function parseAiSettings(value: unknown): AiSettings | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  const pick = (key: keyof AiSettings) => {
+    const field = raw[key];
+    return typeof field === 'string' && field.trim() ? field.trim() : undefined;
+  };
+  const ai: AiSettings = {};
+  const apiKey = pick('apiKey');
+  const baseURL = pick('baseURL');
+  const model = pick('model');
+  if (apiKey) ai.apiKey = apiKey;
+  if (baseURL) ai.baseURL = baseURL;
+  if (model) ai.model = model;
+  return Object.keys(ai).length > 0 ? ai : undefined;
 }
 
 /** 解析数据根目录：显式参数 > XDOC_ROOT > ~/.xdoc */

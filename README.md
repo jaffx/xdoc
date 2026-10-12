@@ -248,9 +248,11 @@ sudo systemctl daemon-reload && sudo systemctl enable --now xdoc
 | 监听地址 | `--host` | `XDOC_HOST`（仅脚本） | `host` |
 | 端口 | `-p` / `--port` | `XDOC_PORT`（仅脚本） | `port` |
 | 证书 / 私钥 | `--cert` / `--key` | — | `cert` / `key` |
+| AI 配置 | — | — | `ai.apiKey` / `ai.baseURL` / `ai.model` |
 
 写成文件的好处：`scripts/xdoc.sh` 与 systemd 都不必带一长串参数，令牌也不会
-出现在 `ps` 的输出里。
+出现在 `ps` 的输出里。AI 配置没有命令行入口，在网页的[设置面板](#设置面板)里改，
+或者直接编辑 config.json。
 
 ## 数据根目录（root）
 
@@ -259,7 +261,7 @@ sudo systemctl daemon-reload && sudo systemctl enable --now xdoc
 ```
 <root>/                  # 默认 ~/.xdoc
 ├── index.json           # 空间索引：格式版本 / 展示顺序 / 上次活跃空间
-├── config.json          # 部署参数：token / host / port / cert / key（首次运行自动生成）
+├── config.json          # 部署参数与 AI 配置：token / host / port / cert / key / ai（首次运行自动生成）
 ├── spaces/              # 每个子目录是一个空间
 │   ├── examples/
 │   └── my-notes/
@@ -343,6 +345,37 @@ URL 结构为 `#/空间id/文档路径`，切换空间时会记住每个空间�
 导出的文件不含任何脚本，亮/暗主题跟随导出时的界面主题。图表源码块与「复制代码」按钮会被去掉，标题锚点改为页内跳转。
 
 正文标题在 2 个以上时会额外生成一份**「本文目录」**（与应用里右侧面板同一套取舍），插在大标题之后：纯页内锚点链接，没有脚本，收起/展开用原生 `<details>`，所以离线打开也能折叠。
+
+## 设置面板
+
+顶栏右侧的齿轮按钮。两组配置，都写回 `<root>/config.json`（权限 0600）：
+
+- **AI 助手**：`API Key`、`Base URL`（留空走官方 `api.anthropic.com`）、模型名
+- **访问令牌**：给 xdoc 自己加的一道门，留空即不鉴权
+
+密钥类字段（API Key、令牌）**一律不回显**，接口只返回掩码（`sk-a••••mnop`），
+页面上看到的也是掩码。因此输入框留空表示「不改动」，要清掉已存的值得点一下
+「清除」（误点可以再点一次撤销）。`Base URL` 与模型名会原样回填，清空即代表清除。
+
+```json
+{
+  "host": "0.0.0.0",
+  "ai": {
+    "apiKey": "sk-ant-…",
+    "baseURL": "https://your-gateway.example.com",
+    "model": "claude-sonnet-5"
+  }
+}
+```
+
+几个行为约定：
+
+- **改了令牌立刻生效**，不用重启；顺手记进当前浏览器，免得刚设完自己就被挡在外面
+- 改完 AI 配置同样立刻生效（每次对话现读配置，不缓存），不必重启服务
+- 启动参数里的 `--token` 优先级高于 config.json，所以用命令行指定过令牌的实例，
+  重启后会以命令行为准
+- 没在面板里填过 API Key 时，回退去读 `~/.config/opencode/opencode.json` 里那份
+  （`provider.*.npm` 为 `@ai-sdk/anthropic` 的那个），xdoc 只是读，不写它
 
 ## 内置嵌入体
 
@@ -664,11 +697,13 @@ src/
 │   ├── bootstrap.ts    # 扫描 <root>/spaces 装载空间
 │   ├── persistence.ts  # 空间索引（<root>/index.json）
 │   ├── tree.ts         # markdown 目录树扫描（统一按名排序，隐藏 . 开头）
-│   └── config.ts       # xdoc.config.ts 加载与编译
+│   ├── config.ts       # xdoc.config.ts 加载与编译
+│   └── settings.ts     # 设置读写：令牌与 AI 配置（掩码回显、合并写入）
 ├── mcp/
 │   └── server.ts       # 零依赖 MCP stdio 服务（JSON-RPC）
 ├── client/             # 浏览器端：空间切换、路由、目录树管理、TOC、交互增强
-│   └── diagram.ts      # mermaid / echarts 的按需加载与渲染（跟随主题重绘）
+│   ├── diagram.ts      # mermaid / echarts 的按需加载与渲染（跟随主题重绘）
+│   └── settings.ts     # 设置面板（AI 配置与访问令牌）
 └── cli.ts
 ```
 
@@ -690,6 +725,8 @@ src/
 | `GET /api/asset?path=` | `doc/` 内的静态资源 |
 | `GET /api/embeds` | 已注册嵌入体列表 |
 | `GET /api/styles` | 自定义 CSS |
+| `GET /api/settings` | 设置面板读的值（密钥只回掩码） |
+| `PATCH /api/settings` | 改设置：令牌与 `ai` 段，字段缺省 = 不改、空串 = 清掉 |
 | `GET /api/events` | SSE：change / tree / config / spaces |
 | `POST /mcp` | MCP Streamable HTTP 端点（JSON-RPC） |
 

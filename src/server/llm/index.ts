@@ -1,102 +1,78 @@
-import { createAnthropic } from '@ai-sdk/anthropic'
-import { generateText, stepCountIs, streamText } from 'ai'
-import { readFile } from 'fs/promises'
-import { existsSync } from 'fs'
-import { homedir } from 'os'
-import { join } from 'path'
-import { createXdocTools } from './tools'
-import type { SpaceRuntime } from '../space'
+import { createAnthropic } from '@ai-sdk/anthropic';
+import { generateText, stepCountIs, streamText } from 'ai';
+import type { SettingsStore } from '../settings';
+import type { SpaceRuntime } from '../space';
+import { createXdocTools } from './tools';
 
-interface OpencodeProvider {
-  npm: string
-  name: string
-  options: {
-    baseURL: string
-    apiKey: string
-  }
-  models: Record<string, any>
-}
-
-interface OpencodeConfig {
-  provider: Record<string, OpencodeProvider>
-}
-
-let cachedProvider: any = null
-let cachedModel: string = 'auto'
-
-export async function loadOpencodeConfig(): Promise<{ provider: any; model: string }> {
-  if (cachedProvider) {
-    return { provider: cachedProvider, model: cachedModel }
-  }
-
-  const configPath = join(homedir(), '.config/opencode/opencode.json')
-  if (!existsSync(configPath)) {
-    throw new Error('opencode 配置文件不存在: ' + configPath)
-  }
-
-  const config: OpencodeConfig = JSON.parse(await readFile(configPath, 'utf-8'))
-  
-  const [, providerConfig] = Object.entries(config.provider)[0]
-  
-  if (providerConfig.npm !== '@ai-sdk/anthropic') {
-    throw new Error(`暂不支持的 provider: ${providerConfig.npm}`)
-  }
-
-  cachedProvider = createAnthropic({
-    baseURL: providerConfig.options.baseURL,
-    apiKey: providerConfig.options.apiKey,
-  })
-
-  const models = Object.keys(providerConfig.models)
-  // 优先选择具体的模型，避免 'auto'
-  cachedModel = models.find(m => m !== 'auto') || models[0]
-
-  return { provider: cachedProvider, model: cachedModel }
-}
+/** 没在设置里指定模型时用这个 */
+const DEFAULT_MODEL = 'claude-sonnet-5';
+/** 工具调用最多来回几步，防止模型自己绕圈 */
+const MAX_STEPS = 10;
 
 export interface ChatMessage {
-  role: 'user' | 'assistant' | 'system'
-  content: string
+  role: 'user' | 'assistant' | 'system';
+  content: string;
 }
 
-export async function chat(
-  messages: ChatMessage[],
-  runtime: SpaceRuntime,
-  options?: { model?: string; useTools?: boolean; instructions?: string }
-): Promise<string> {
-  const { provider, model } = await loadOpencodeConfig()
-  const modelName = options?.model || model
-
-  const tools = options?.useTools ? createXdocTools(() => runtime) : undefined
-
-  const result = await generateText({
-    model: provider(modelName),
-    messages,
-    instructions: options?.instructions,
-    tools,
-    stopWhen: tools ? stepCountIs(10) : undefined,
-  })
-
-  return result.text
+export interface LlmOptions {
+  model?: string;
+  useTools?: boolean;
+  instructions?: string;
+  abortSignal?: AbortSignal;
 }
 
-/** 流式对话：返回 streamText 结果，调用方消费 fullStream 并转发事件 */
-export async function chatStream(
-  messages: ChatMessage[],
-  runtime: SpaceRuntime,
-  options: { model?: string; useTools?: boolean; instructions?: string; abortSignal?: AbortSignal } = {}
-) {
-  const { provider, model } = await loadOpencodeConfig()
-  const modelName = options.model || model
+/**
+ * AI 助手的模型入口。
+ *
+ * 每次调用都重新读一遍配置，不缓存：设置面板改完 apiKey 立刻生效，不用重启。
+ * 配置怎么来的（xdoc 的 config.json，还是兜底读 opencode）见 server/settings.ts。
+ */
+export class LlmClient {
+  #store: SettingsStore;
 
-  const tools = options.useTools ? createXdocTools(() => runtime) : undefined
+  constructor(store: SettingsStore) {
+    this.#store = store;
+  }
 
-  return streamText({
-    model: provider(modelName),
-    messages,
-    instructions: options.instructions,
-    tools,
-    stopWhen: tools ? stepCountIs(10) : undefined,
-    abortSignal: options.abortSignal,
-  })
+  /** 按当前配置建出要用的模型；没配 key 时在这里报错，错误信息直接给面板指路 */
+  #model(override?: string) {
+    const { settings } = this.#store.resolveAi();
+    if (!settings.apiKey) {
+      throw new Error('还没配置 API Key：点右上角的设置按钮，在「AI 助手」里填一个');
+    }
+    const provider = createAnthropic({
+      apiKey: settings.apiKey,
+      ...(settings.baseURL ? { baseURL: settings.baseURL } : {}),
+    });
+    return provider(override || settings.model || DEFAULT_MODEL);
+  }
+
+  #tools(runtime: SpaceRuntime, useTools?: boolean) {
+    return useTools ? createXdocTools(() => runtime) : undefined;
+  }
+
+  async chat(messages: ChatMessage[], runtime: SpaceRuntime, options: LlmOptions = {}): Promise<string> {
+    const tools = this.#tools(runtime, options.useTools);
+    const result = await generateText({
+      model: this.#model(options.model),
+      messages,
+      instructions: options.instructions,
+      tools,
+      stopWhen: tools ? stepCountIs(MAX_STEPS) : undefined,
+    });
+    return result.text;
+  }
+
+  /** 流式对话：返回 streamText 结果，调用方消费 fullStream 并转发事件 */
+  async stream(messages: ChatMessage[], runtime: SpaceRuntime, options: LlmOptions = {}) {
+    const tools = this.#tools(runtime, options.useTools);
+    return streamText({
+      model: this.#model(options.model),
+      messages,
+      instructions: options.instructions,
+      tools,
+      stopWhen: tools ? stepCountIs(MAX_STEPS) : undefined,
+      abortSignal: options.abortSignal,
+    });
+  }
 }

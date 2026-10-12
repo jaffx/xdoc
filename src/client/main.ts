@@ -22,6 +22,7 @@ import {
 import { createAssetsPanel } from './assets';
 import { initChatDialog, notifySpaceChanged, openChatDialog, syncChatDoc } from './chat';
 import { renderDiagrams } from './diagram';
+import { settingsPanel } from './settings';
 
 const $ = <T extends Element = HTMLElement>(selector: string) => document.querySelector(selector) as T;
 
@@ -34,6 +35,7 @@ const els = {
   status: $('#status'),
   exportBtn: $('#export-btn') as HTMLButtonElement,
   chatBtn: $('#chat-btn') as HTMLButtonElement,
+  settingsBtn: $('#settings-btn') as HTMLButtonElement,
   scroller: $('#scroller'),
   toast: $('#toast'),
   themeToggle: $('#theme-toggle'),
@@ -164,11 +166,21 @@ function decodeSegment(segment: string): string {
   }
 }
 
+/**
+ * 把文档里的相对地址解析成空间内的路径。
+ *
+ * 两边的编码状态不一样：`fromDoc` 是 parseHash 解过码的，而 `href` 是 markdown-it
+ * 给的、非 ASCII 已经被它百分号编码过的。所以先按段解码再拼，全在解码空间里做，
+ * 出去由 docHash / encodeURIComponent 统一编码一次。不这么做的话 `%` 会被二次编码
+ * 成 `%25`，所有带中文的相对链接和图片都会 404。
+ */
 function resolveRelative(fromDoc: string, href: string): string {
   const [pathPart] = href.split(/[?#]/);
-  const segments = pathPart.startsWith('/')
-    ? pathPart.split('/')
-    : [...fromDoc.split('/').slice(0, -1), ...pathPart.split('/')];
+  const segments = (
+    pathPart.startsWith('/')
+      ? pathPart.split('/')
+      : [...fromDoc.split('/').slice(0, -1), ...pathPart.split('/')]
+  ).map(decodeSegment);
   const out: string[] = [];
   for (const segment of segments) {
     if (!segment || segment === '.') continue;
@@ -1450,6 +1462,7 @@ async function boot() {
 
   els.exportBtn.addEventListener('click', () => void exportDoc());
   els.chatBtn.addEventListener('click', () => openChatDialog());
+  els.settingsBtn.addEventListener('click', () => settingsPanel.open());
   els.newFile.addEventListener('click', () => beginCreate(null, 'file'));
   els.newFolder.addEventListener('click', () => beginCreate(null, 'folder'));
   

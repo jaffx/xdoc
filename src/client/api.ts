@@ -253,6 +253,40 @@ export function clearChatHistory(space: string): Promise<{ ok: boolean }> {
   return request(`/api/chat/history?space=${encodeURIComponent(space)}`, { method: 'DELETE' });
 }
 
+/** 设置面板看到的样子：密钥只有掩码，服务端不会把真值送出来 */
+export interface SettingsView {
+  ai: {
+    hasApiKey: boolean;
+    apiKeyMask: string;
+    baseURL: string;
+    model: string;
+    /** 这份配置的来路：xdoc 自己的 config.json，还是兜底读的 opencode */
+    source: 'xdoc' | 'opencode' | 'none';
+  };
+  token: {
+    hasToken: boolean;
+    tokenMask: string;
+  };
+}
+
+/** 字段缺省 = 不改；空串 = 清掉 */
+export interface SettingsPatch {
+  ai?: { apiKey?: string; baseURL?: string; model?: string };
+  token?: string;
+}
+
+export function fetchSettings(): Promise<SettingsView> {
+  return request<SettingsView>('/api/settings');
+}
+
+export function patchSettings(patch: SettingsPatch): Promise<SettingsView> {
+  return request<SettingsView>('/api/settings', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  });
+}
+
 export function renderMarkdown(space: string, markdown: string): Promise<{ html: string }> {
   return request(`/api/render?space=${encodeURIComponent(space)}`, {
     method: 'POST',

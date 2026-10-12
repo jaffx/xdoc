@@ -8,8 +8,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createMcpSession } from '../mcp/server';
 import { bootstrapSpaces } from './bootstrap';
+import type { LlmClient } from './llm/index';
 import { createDoc, createFolder, deleteEntry, OperationError, renameEntry, resolveInside } from './operations';
 import { loadIndex, saveIndex } from './persistence';
+import { SettingsStore, type SettingsPatch } from './settings';
 import { publicSpace, SpaceManager, type SpaceRuntime } from './space';
 import { scanTree } from './tree';
 
@@ -110,6 +112,26 @@ async function readBody(req: IncomingMessage, maxBytes = 64 * 1024): Promise<str
   return Buffer.concat(chunks).toString('utf8');
 }
 
+/**
+ * 设置面板提交的改动：只收认识的字段，其余忽略。
+ * 字段缺省 = 不改；空串 = 清掉，这条语义在 SettingsStore.update 里落实。
+ */
+function parseSettingsPatch(body: Record<string, unknown>): SettingsPatch {
+  const patch: SettingsPatch = {};
+  const ai = body.ai;
+  if (ai && typeof ai === 'object' && !Array.isArray(ai)) {
+    const source = ai as Record<string, unknown>;
+    const fields: NonNullable<SettingsPatch['ai']> = {};
+    for (const key of ['apiKey', 'baseURL', 'model'] as const) {
+      const value = source[key];
+      if (typeof value === 'string') fields[key] = value;
+    }
+    patch.ai = fields;
+  }
+  if (typeof body.token === 'string') patch.token = body.token;
+  return patch;
+}
+
 async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
   const raw = await readBody(req);
   if (!raw) return {};
@@ -187,6 +209,8 @@ function tokenEquals(expected: string, actual: string): boolean {
 
 export async function startServer(options: StartOptions): Promise<RunningServer> {
   const root = path.resolve(options.root);
+  // 设置面板背后那份配置：访问令牌与 AI 参数都从这里读写
+  const settings = new SettingsStore(root, options.token ?? '');
   const publicDir = findPublicDir();
   const sseClients = new Set<ServerResponse>();
   const broadcast = (event: string, data: unknown) => {
@@ -222,6 +246,16 @@ export async function startServer(options: StartOptions): Promise<RunningServer>
     log: (message) => console.log(`[xdoc-mcp] ${message}`),
   });
 
+  // 模型 SDK 只在真的用到 AI 助手时才加载（import type 不产生运行时代码）
+  let llm: LlmClient | null = null;
+  const llmClient = async (): Promise<LlmClient> => {
+    if (!llm) {
+      const { LlmClient: Impl } = await import('./llm/index');
+      llm = new Impl(settings);
+    }
+    return llm;
+  };
+
   const sendFile = (res: ServerResponse, file: string) => {
     const type = MIME[path.extname(file).toLowerCase()] ?? 'application/octet-stream';
     res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'no-store' });
@@ -236,9 +270,11 @@ export async function startServer(options: StartOptions): Promise<RunningServer>
       // 令牌只保护数据接口；静态资源放行，否则页面本身都打不开，也就没法让用户输入令牌。
       // 查询串形式是给浏览器里设不了请求头的请求用的（<img>、EventSource）。
       const guarded = pathname === '/mcp' || pathname.startsWith('/api/');
-      if (options.token && guarded) {
+      // 每次请求现取：设置面板里改了令牌要立刻生效，不能只在启动时读一次
+      const token = settings.token;
+      if (token && guarded) {
         const provided = bearerToken(req) || url.searchParams.get('token') || '';
-        if (!tokenEquals(options.token, provided)) {
+        if (!tokenEquals(token, provided)) {
           res.writeHead(401, {
             'Content-Type': MIME['.json'],
             'WWW-Authenticate': 'Bearer',
@@ -504,6 +540,21 @@ export async function startServer(options: StartOptions): Promise<RunningServer>
         return;
       }
 
+      // ---- 设置面板（令牌 + AI 配置，落在 <root>/config.json）----
+
+      if (pathname === '/api/settings') {
+        if (req.method === 'GET') {
+          sendJson(res, 200, settings.publicView());
+          return;
+        }
+        if (req.method === 'PATCH') {
+          const body = await readJsonBody(req);
+          sendJson(res, 200, await settings.update(parseSettingsPatch(body)));
+          return;
+        }
+        throw httpError(405, '仅支持 GET / PATCH');
+      }
+
       // ---- AI 助手（对话历史按空间持久化在 <space>/.chat/history.json）----
 
       if (pathname === '/api/chat/history') {
@@ -537,8 +588,8 @@ export async function startServer(options: StartOptions): Promise<RunningServer>
         try {
           appendChatTurns(runtime.info, [{ role: 'user', content: message, at: Date.now() }]);
           const context = windowMessages(loadChatHistory(runtime.info));
-          const { chat } = await import('./llm/index');
-          const reply = await chat(context, runtime, {
+          const client = await llmClient();
+          const reply = await client.chat(context, runtime, {
             model,
             useTools: true,
             instructions: buildSystemPrompt(runtime.info, docPath),
@@ -567,7 +618,6 @@ export async function startServer(options: StartOptions): Promise<RunningServer>
         }
 
         const { appendChatTurns, buildSystemPrompt, loadChatHistory, windowMessages } = await import('./chat');
-        const { chatStream } = await import('./llm/index');
 
         appendChatTurns(runtime.info, [{ role: 'user', content: message, at: Date.now() }]);
         const context = windowMessages(loadChatHistory(runtime.info));
@@ -577,9 +627,10 @@ export async function startServer(options: StartOptions): Promise<RunningServer>
           if (!res.writableEnded) controller.abort();
         });
 
-        let stream: Awaited<ReturnType<typeof chatStream>>;
+        let stream: Awaited<ReturnType<LlmClient['stream']>>;
         try {
-          stream = await chatStream(context, runtime, {
+          const client = await llmClient();
+          stream = await client.stream(context, runtime, {
             model,
             useTools: true,
             instructions: buildSystemPrompt(runtime.info, docPath),

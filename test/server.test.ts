@@ -414,6 +414,68 @@ test('访问令牌：数据接口要令牌，静态资源不要', async () => {
   }
 });
 
+test('设置面板接口：掩码回显 / 合并写入 / 空串清除 / 令牌即时生效', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'xdoc-settings-'));
+  await makeSpace(root, 'docs', { 'index.md': '# 文档' });
+
+  const server = await startServer({ root, port: 0 });
+  const api = (route: string, init?: RequestInit) => fetch(`http://127.0.0.1:${server.port}${route}`, init);
+  const patch = (body: unknown, headers: Record<string, string> = {}) =>
+    api('/api/settings', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...headers },
+      body: JSON.stringify(body),
+    });
+  interface SettingsPayload {
+    ai: { hasApiKey: boolean; apiKeyMask: string; baseURL: string; model: string; source: string };
+    token: { hasToken: boolean; tokenMask: string };
+  }
+  const readRaw = async () => JSON.parse(await readFile(path.join(root, 'config.json'), 'utf8'));
+
+  try {
+    // 空配置：什么都不回显
+    const empty = (await (await api('/api/settings')).json()) as SettingsPayload;
+    assert.equal(empty.ai.hasApiKey, false);
+    assert.equal(empty.ai.apiKeyMask, '');
+    assert.equal(empty.ai.source, 'none');
+
+    // 写入后只回掩码，真值不出接口
+    const saved = (await (await patch({ ai: { apiKey: 'sk-ant-api03-abcdefghijklmnop', model: 'claude-sonnet-5' } })).json()) as SettingsPayload;
+    assert.equal(saved.ai.hasApiKey, true);
+    assert.equal(saved.ai.apiKeyMask, 'sk-a••••mnop');
+    assert.equal(saved.ai.source, 'xdoc');
+    assert.equal(JSON.stringify(saved).includes('abcdefghijklmnop'), false, '接口不得回出完整密钥');
+    assert.equal((await readRaw()).ai.apiKey, 'sk-ant-api03-abcdefghijklmnop');
+
+    // 没提到的字段保持原样，显式给空串才清除
+    const partial = (await (await patch({ ai: { model: 'claude-opus-5' } })).json()) as SettingsPayload;
+    assert.equal(partial.ai.baseURL, '');
+    assert.equal(partial.ai.model, 'claude-opus-5');
+    assert.equal((await readRaw()).ai.apiKey, 'sk-ant-api03-abcdefghijklmnop', '未提交的字段不该被动');
+
+    // config.json 里有密钥，得是 0600
+    assert.equal((await stat(path.join(root, 'config.json'))).mode & 0o777, 0o600);
+
+    // 令牌写进去就立刻生效，不用重启
+    const withToken = (await (await patch({ token: 'fresh-token' })).json()) as SettingsPayload;
+    assert.equal(withToken.token.hasToken, true);
+    assert.equal(withToken.token.tokenMask, 'fres••••oken');
+    assert.equal((await api('/api/spaces')).status, 401, '新令牌应马上起作用');
+    assert.equal((await api('/api/spaces', { headers: { Authorization: 'Bearer fresh-token' } })).status, 200);
+
+    // 清掉令牌就恢复不鉴权
+    await patch({ token: '' }, { Authorization: 'Bearer fresh-token' });
+    assert.equal((await api('/api/spaces')).status, 200);
+    assert.equal((await readRaw()).token, undefined, '清掉的字段应从文件里消失');
+
+    // 只认 GET / PATCH
+    assert.equal((await api('/api/settings', { method: 'POST' })).status, 405);
+  } finally {
+    await server.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('MCP over HTTP：initialize / tools / 通知 / 方法限制 / Origin 校验', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'xdoc-mcp-http-'));
   await makeSpace(root, 'docs', { 'index.md': '# 文档' });
